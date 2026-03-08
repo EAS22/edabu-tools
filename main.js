@@ -1,0 +1,747 @@
+process.on('uncaughtException', (err) => console.error('UNCAUGHT:', err));
+require('dotenv').config();
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const puppeteer = require('puppeteer');
+const { generateCardPDF } = require('./card-generator');
+const { solveCaptchaImage } = require('./captcha-solver');
+const { dialog } = require('electron');
+const { generateMasterKey, encrypt, decrypt, keyToHex, hexToKey } = require('./crypto-utils');
+
+function getSystemChromePath() {
+    const paths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'
+    ];
+    for (const p of paths) {
+        if (fs.existsSync(p)) return p;
+    }
+    return null;
+}
+
+// ============================================
+// CAPTCHA ICON HIDE HELPER
+// ============================================
+// Only hide icons on search page, NOT on login page
+// Login page needs reload button to be clickable
+
+const BOTDETECT_HIDE_SELECTORS = [
+    '#edabuCaptcha_CaptchaIconsDiv',
+    '#edabuCaptcha_ReloadLink',
+    '#edabuCaptcha_ReloadIcon',
+    '#edabuCaptcha_SoundLink',
+    '#edabuCaptcha_SoundIcon',
+    '#edabuCaptcha_AudioPlaceholder'
+];
+
+async function hideCaptchaIconsIfNeeded(page) {
+    const currentUrl = page.url();
+    const isSearchPage = currentUrl.includes('/Peserta/Index') || currentUrl.includes('#pencarian');
+    
+    if (isSearchPage) {
+        const hideCSS = `${BOTDETECT_HIDE_SELECTORS.join(', ')} { display: none !important; }`;
+        await page.addStyleTag({ content: hideCSS });
+        await new Promise(r => setTimeout(r, 300)); // Wait for CSS to apply
+    }
+    // Login page: do NOT hide icons - keep reload button clickable
+}
+
+let mainWindow;
+let browserInstance = null;
+let pageInstance = null;
+let pesanErrorAlert = null;
+
+// Fungsi bantuan untuk menangkap pesan dan menutup HTML modal dialogs/Notifikasi
+// Menunggu modal muncul (dengan timeout), membaca pesannya, lalu menutupnya.
+async function autoCloseHtmlModals(page, waitMs = 2000) {
+    try {
+        // Tunggu sampai modal SweetAlert benar-benar muncul di layar, atau timeout
+        await page.waitForSelector('.swal-overlay--show-modal, .swal2-popup, .modal.show, .modal.in', {
+            visible: true,
+            timeout: waitMs
+        }).catch(() => { }); // Tidak masalah jika tidak muncul (artinya tidak ada error)
+
+        const modalMessage = await page.evaluate(() => {
+            let message = '';
+
+            // SweetAlert 1 (swal) - yang digunakan Edabu
+            const swalOverlay = document.querySelector('.swal-overlay--show-modal');
+            if (swalOverlay) {
+                const swalTitle = swalOverlay.querySelector('.swal-title');
+                const swalText = swalOverlay.querySelector('.swal-text');
+                if (swalTitle) message = swalTitle.innerText.trim();
+                if (swalText && swalText.innerText.trim()) {
+                    message += (message ? ' - ' : '') + swalText.innerText.trim();
+                }
+                // Klik tombol OK/Confirm untuk menutup
+                const swalBtn = swalOverlay.querySelector('.swal-button--confirm, .swal-button');
+                if (swalBtn) swalBtn.click();
+            }
+
+            // SweetAlert 2 (Swal.fire)
+            const swal2Popup = document.querySelector('.swal2-popup');
+            if (!message && swal2Popup) {
+                const s2Title = swal2Popup.querySelector('.swal2-title');
+                const s2Content = swal2Popup.querySelector('.swal2-html-container, .swal2-content');
+                if (s2Title) message = s2Title.innerText.trim();
+                if (s2Content && s2Content.innerText.trim()) {
+                    message += (message ? ' - ' : '') + s2Content.innerText.trim();
+                }
+                const s2Btn = swal2Popup.querySelector('.swal2-confirm');
+                if (s2Btn) s2Btn.click();
+            }
+
+            // Bootstrap Modal 
+            const bsModal = document.querySelector('.modal.show, .modal.in');
+            if (!message && bsModal) {
+                const bsBody = bsModal.querySelector('.modal-body');
+                if (bsBody) message = bsBody.innerText.trim();
+                const bsClose = bsModal.querySelector('button[data-dismiss="modal"], .btn-close, .close');
+                if (bsClose) bsClose.click();
+            }
+
+            return message;
+        });
+
+        if (modalMessage) {
+            console.log('Pesan dari Modal Edabu:', modalMessage);
+            pesanErrorAlert = modalMessage;
+        }
+    } catch (e) {
+        console.error("Gagal menutup modal:", e);
+    }
+}
+
+function createWindow() {
+    mainWindow = new BrowserWindow({
+        width: 1280,
+        height: 850,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true
+        },
+        title: 'Edabu Tools',
+        autoHideMenuBar: true
+    });
+
+    mainWindow.loadFile('index.html');
+
+    // Cegah close saat masih login — paksa user logout dulu
+    mainWindow.on('close', (e) => {
+        if (pageInstance) {
+            const currentUrl = pageInstance.url();
+            // Jika sedang di halaman login awal, boleh langsung quit tanpa logout
+            if (currentUrl.includes('/Edabu/Home/Login') || currentUrl === 'about:blank') {
+                pageInstance = null;
+                return;
+            }
+
+            // Jika sudah login, cegah quit dan munculkan dialog logout
+            e.preventDefault();
+            mainWindow.webContents.send('force-logout-prompt');
+        }
+    });
+
+    // Pengecekan real-time status browser untuk indikator UI
+    setInterval(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            const isConnected = browserInstance && browserInstance.isConnected();
+            mainWindow.webContents.send('puppeteer-status', {
+                status: isConnected ? 'connected' : 'disconnected'
+            });
+        }
+    }, 2000);
+}
+
+app.whenReady().then(() => {
+    createWindow();
+
+    app.on('activate', () => {
+        if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+});
+
+// IPC: Quit app setelah logout dari tombol X
+ipcMain.on('quit-app', () => {
+    // Set pageInstance null agar close handler tidak memblokir
+    pageInstance = null;
+    // Destroy window secara paksa agar frontend tidak sempat re-init
+    if (mainWindow) {
+        mainWindow.destroy();
+        mainWindow = null;
+    }
+    app.quit();
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', async () => {
+    if (browserInstance) {
+        await browserInstance.close();
+    }
+});
+
+// ==================== IPC HANDLERS ====================
+
+// Endpoint Init Session
+ipcMain.handle('init-session', async () => {
+    try {
+        if (!browserInstance) {
+            console.log('Menyiapkan instance browser...');
+
+            const execPath = getSystemChromePath();
+            if (!execPath) {
+                return { status: 'error', message: 'Browser Chrome atau Edge tidak ditemukan di komputer ini. Silakan install Chrome.' };
+            }
+
+            browserInstance = await puppeteer.launch({
+                executablePath: execPath,
+                headless: 'new', // Selalu sembunyikan browser di background
+                slowMo: 10, // Dikurangi untuk speed up (fix 11)
+                defaultViewport: null,
+                args: [
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--disable-setuid-sandbox',
+                    '--no-sandbox',
+                    '--window-size=1280,720'
+                ]
+            });
+            pageInstance = await browserInstance.newPage();
+
+            // OPTIMASI: Blokir aset yang bikin lambat (jangan blokir stylesheet supaya layout tidak rusak)
+            const BLOCKED_TYPES = ['image', 'font', 'media', 'websocket'];
+            const WHITELIST_DOMAINS = ['bpjs-kesehatan.go.id'];
+
+            await pageInstance.setRequestInterception(true);
+            pageInstance.on('request', (req) => {
+                const resourceType = req.resourceType();
+                const url = req.url();
+                
+                // Don't block resources from whitelist domains
+                if (WHITELIST_DOMAINS.some(domain => url.includes(domain))) {
+                    req.continue();
+                    return;
+                }
+                
+                if (BLOCKED_TYPES.includes(resourceType)) {
+                    req.abort();
+                } else {
+                    req.continue();
+                }
+            });
+
+            // PASANG TELINGA
+            pageInstance.on('dialog', async dialog => {
+                pesanErrorAlert = dialog.message();
+                console.log('Tertangkap Alert dari Edabu:', pesanErrorAlert);
+                await dialog.accept();
+            });
+        }
+
+        console.log('Menuju halaman login Edabu...');
+        // Fix 11: Gunakan domcontentloaded agar jauh lebih cepat dan bypass t/o
+        await pageInstance.goto('https://edabu.bpjs-kesehatan.go.id/Edabu/Home/Login', {
+            waitUntil: 'domcontentloaded',
+            timeout: 15000
+        }).catch(e => console.log('Goto login timeout, continuing to waitForSelector...'));
+
+        console.log('Mencari elemen Captcha...');
+        await pageInstance.waitForSelector('#edabuCaptcha_CaptchaImage', { timeout: 15000 });
+        console.log('Elemen Captcha ditemukan. Menunggu gambar termuat penuh...');
+
+        // Pastikan gambar sudah benar-benar ter-render untuk mencegah screenshot hang
+        await pageInstance.waitForFunction(() => {
+            const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+            return img && img.complete && img.naturalWidth > 0;
+        }, { timeout: 15000 }).catch(e => console.log('Image complete check timeout, trying anyway'));
+
+        // Note: Captcha icons NOT hidden on login page - reload button must remain clickable
+        // Icons will only be hidden on search page via hideCaptchaIconsIfNeeded()
+
+        console.log('Mengambil screenshot captcha...');
+        const captchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+        const captchaBase64 = await captchaElement.screenshot({ encoding: 'base64' });
+        console.log('Screenshot berhasil.');
+
+        return {
+            status: 'success',
+            message: 'Sesi login siap.',
+            captchaImage: `data:image/png;base64,${captchaBase64}`
+        };
+
+    } catch (error) {
+        console.error('Error saat inisiasi sesi:', error);
+        return { status: 'error', message: error.message };
+    }
+});
+
+// Endpoint Eksekusi Login
+ipcMain.handle('execute-login', async (event, data) => {
+    const { username, password, captcha } = data;
+
+    if (!username || !password || !captcha) {
+        return { status: 'error', message: 'Kredensial atau Captcha tidak lengkap!' };
+    }
+    if (!pageInstance) {
+        return { status: 'error', message: 'Sesi browser belum diinisiasi.' };
+    }
+
+    try {
+        pesanErrorAlert = null;
+        console.log('Mengisi form login...');
+        await pageInstance.type('#txtusername', username);
+        await pageInstance.type('#txtpassword', password);
+        await pageInstance.type('#txtcaptcha', captcha);
+
+        console.log('Klik tombol login...');
+        await Promise.all([
+            pageInstance.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(e => console.log('No navigation just dialog')),
+            pageInstance.click('#btnlogin')
+        ]);
+
+        // Menunggu dan menangkap pesan modal/notifikasi dari Edabu
+        await autoCloseHtmlModals(pageInstance);
+
+        if (pesanErrorAlert) {
+            console.log('Login gagal karena alert:', pesanErrorAlert);
+            // Edabu otomatis refresh captcha setelah error, tunggu captcha baru
+            await new Promise(r => setTimeout(r, 1000));
+            await pageInstance.waitForFunction(() => {
+                const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+                return img && img.complete && img.naturalWidth > 0;
+            }, { timeout: 10000 }).catch(e => console.log('Captcha refresh after login error timeout'));
+
+            const errCaptchaEl = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+            let errCaptcha = null;
+            if (errCaptchaEl) {
+                errCaptcha = await errCaptchaEl.screenshot({ encoding: 'base64' });
+            }
+            return {
+                status: 'error',
+                message: pesanErrorAlert,
+                captchaImage: errCaptcha ? `data:image/png;base64,${errCaptcha}` : null
+            };
+        }
+
+        const currentUrl = pageInstance.url();
+        if (currentUrl.includes('/Edabu/Home/Index') || currentUrl.includes('/Edabu/Peserta/Index')) {
+            console.log('Login Sukses! Mengarahkan ke halaman pencarian...');
+            await autoCloseHtmlModals(pageInstance);
+
+            await pageInstance.goto('https://edabu.bpjs-kesehatan.go.id/Edabu/Peserta/Index#pencarian', {
+                waitUntil: 'domcontentloaded', // Fix 11
+                timeout: 15000
+            }).catch(e => console.log('Goto pencarian timeout, continuing...'));
+
+            console.log('Menunggu captcha halaman pencarian...');
+            await pageInstance.waitForSelector('#edabuCaptcha_CaptchaImage', { timeout: 15000 });
+
+            await pageInstance.waitForFunction(() => {
+                const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+                return img && img.complete && img.naturalWidth > 0;
+            }, { timeout: 15000 }).catch(e => console.log('Image complete check timeout'));
+
+            console.log('Mengambil screenshot captcha pencarian...');
+            await hideCaptchaIconsIfNeeded(pageInstance);
+            const newCaptchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+            const newCaptchaBase64 = await newCaptchaElement.screenshot({ encoding: 'base64' });
+            console.log('Screenshot pencarian berhasil.');
+
+            return {
+                status: 'success',
+                message: 'Login berhasil!',
+                nextCaptchaImage: `data:image/png;base64,${newCaptchaBase64}`
+            };
+        } else {
+            return { status: 'error', message: 'Login gagal, pastikan kredensial benar.' };
+        }
+
+    } catch (error) {
+        console.error('Error saat eksekusi login:', error);
+        return { status: 'error', message: error.message };
+    }
+});
+
+// Endpoint Pencarian NIK
+ipcMain.handle('search-nik', async (event, data) => {
+    const { nik, captcha } = data;
+    if (!nik || !captcha) return { status: 'error', message: 'NIK dan Captcha pencarian harus diisi!' };
+    if (!pageInstance) return { status: 'error', message: 'Sesi browser belum siap.' };
+
+    try {
+        pesanErrorAlert = null;
+        console.log(`\nMemulai pencarian untuk NIK: ${nik}`);
+        await pageInstance.evaluate(() => {
+            document.querySelector('#txtParam').value = '';
+            document.querySelector('#txtcaptcha').value = '';
+        });
+
+        await pageInstance.type('#txtParam', nik);
+        await pageInstance.type('#txtcaptcha', captcha);
+
+        console.log('Klik tombol Selanjutnya...');
+        await pageInstance.click('.sw-btn-next');
+
+        // Menunggu dan menangkap pesan modal/notifikasi dari Edabu
+        await autoCloseHtmlModals(pageInstance);
+
+        if (pesanErrorAlert) {
+            console.log('Pencarian gagal karena alert:', pesanErrorAlert);
+            // Edabu otomatis refresh captcha setelah error, tunggu captcha baru
+            await new Promise(r => setTimeout(r, 1000));
+            await pageInstance.waitForFunction(() => {
+                const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+                return img && img.complete && img.naturalWidth > 0;
+            }, { timeout: 10000 }).catch(e => console.log('Captcha refresh after error timeout'));
+
+            const errCaptchaEl = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+            let errCaptcha = null;
+            if (errCaptchaEl) {
+                await hideCaptchaIconsIfNeeded(pageInstance);
+                errCaptcha = await errCaptchaEl.screenshot({ encoding: 'base64' });
+            }
+            return {
+                status: 'error',
+                message: pesanErrorAlert,
+                nextCaptchaImage: errCaptcha ? `data:image/png;base64,${errCaptcha}` : null
+            };
+        }
+
+        // Tunggu sampai tabel berisi data riil (bukan "No data available") ATAU timeout
+        console.log('Menunggu data muncul di tabel...');
+        await pageInstance.waitForFunction(() => {
+            const rows = document.querySelectorAll('#tblPencarian tbody tr');
+            if (rows.length === 0) return false;
+            // Cek apakah baris pertama BUKAN "No data available"
+            if (rows.length === 1 && rows[0].querySelector('.dataTables_empty')) return false;
+            return true;
+        }, { timeout: 15000 }).catch(e => console.log('Data table timeout'));
+
+        console.log('Data muncul, scraping...');
+        const hasilScraping = await pageInstance.evaluate((searchNik) => {
+            const rows = document.querySelectorAll('#tblPencarian tbody tr');
+            const dataKeluarga = [];
+
+            if (rows.length === 1 && rows[0].querySelector('.dataTables_empty')) {
+                return dataKeluarga;
+            }
+
+            rows.forEach(row => {
+                const columns = row.querySelectorAll('td');
+                if (columns.length >= 7) {
+                    const nikBaris = columns[0].innerText.trim();
+                    dataKeluarga.push({
+                        nik: nikBaris,
+                        no_jkn: columns[1].innerText.trim(),
+                        nama: columns[2].innerText.trim(),
+                        hubungan: columns[3].innerText.trim(),
+                        jenis_kepesertaan: columns[4].innerText.trim(),
+                        jabatan: columns[5].innerText.trim(),
+                        status: columns[6].innerText.trim(),
+                        is_target: nikBaris === searchNik
+                    });
+                }
+            });
+            return dataKeluarga;
+        }, nik);
+
+        // Setelah scraping, kembali ke halaman pencarian dengan captcha baru
+        console.log('Kembali ke halaman pencarian...');
+        await pageInstance.goto('https://edabu.bpjs-kesehatan.go.id/Edabu/Peserta/Index#pencarian', {
+            waitUntil: 'domcontentloaded',
+            timeout: 15000
+        }).catch(e => console.log('Goto pencarian timeout'));
+
+        await pageInstance.waitForSelector('#edabuCaptcha_CaptchaImage', { timeout: 15000 });
+        await pageInstance.waitForFunction(() => {
+            const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+            return img && img.complete && img.naturalWidth > 0;
+        }, { timeout: 15000 }).catch(e => console.log('Captcha load timeout'));
+
+        const captchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+        await hideCaptchaIconsIfNeeded(pageInstance);
+        const nextCaptchaBase64 = await captchaElement.screenshot({ encoding: 'base64' });
+        console.log('Captcha baru siap.');
+
+        if (hasilScraping.length === 0) {
+            return {
+                status: 'warning',
+                message: 'Data tidak ditemukan.',
+                data: [],
+                nextCaptchaImage: `data:image/png;base64,${nextCaptchaBase64}`
+            };
+        }
+
+        return {
+            status: 'success',
+            message: 'Data berhasil ditarik.',
+            data: hasilScraping,
+            nextCaptchaImage: `data:image/png;base64,${nextCaptchaBase64}`
+        };
+
+    } catch (error) {
+        console.error('Error saat pencarian NIK:', error);
+        return { status: 'error', message: error.message };
+    }
+});
+
+// Endpoint Refresh Captcha
+ipcMain.handle('refresh-captcha', async () => {
+    if (!pageInstance) return { status: 'error', message: 'Sesi belum ada.' };
+    try {
+        // Click via JavaScript to bypass CSS visibility issues
+        await pageInstance.evaluate(() => {
+            const reloadBtn = document.querySelector('#edabuCaptcha_ReloadLink');
+            if (reloadBtn) reloadBtn.click();
+        });
+        // Fix 11: Tunggu network request ganti gambar saja daripada sleep
+        console.log('Refresh Captcha: menunggu network selesai...');
+        await new Promise(r => setTimeout(r, 800));
+
+console.log('Refresh Captcha: mengambil screenshot...');
+        await pageInstance.waitForFunction(() => {
+            const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+            return img && img.complete && img.naturalWidth > 0;
+        }, { timeout: 15000 }).catch(e => console.log('Image complete check timeout'));
+
+        const captchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+        await hideCaptchaIconsIfNeeded(pageInstance);
+        const newCaptchaBase64 = await captchaElement.screenshot({ encoding: 'base64' });
+        console.log('Refresh Captcha: berhasil.');
+
+        return { status: 'success', captchaImage: `data:image/png;base64,${newCaptchaBase64}` };
+    } catch (error) {
+        return { status: 'error', message: 'Gagal me-refresh Captcha.' };
+    }
+});
+
+// Endpoint Reload
+ipcMain.handle('reload-page', async () => {
+    if (!pageInstance) return { status: 'error', message: 'Sesi belum ada.' };
+    try {
+        await pageInstance.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(e => console.log('Reload timeout, continuing...')); // Fix 11
+        console.log('Reload Page: waiting for selector...');
+        await pageInstance.waitForSelector('#edabuCaptcha_CaptchaImage', { timeout: 15000 });
+
+        await pageInstance.waitForFunction(() => {
+            const img = document.querySelector('#edabuCaptcha_CaptchaImage');
+            return img && img.complete && img.naturalWidth > 0;
+        }, { timeout: 15000 }).catch(e => console.log('Image complete check timeout'));
+
+        console.log('Reload Page: screenshotting...');
+        const captchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+        await hideCaptchaIconsIfNeeded(pageInstance);
+        const captchaBase64 = await captchaElement.screenshot({ encoding: 'base64' });
+        console.log('Reload Page: screenshot berhasil.');
+
+        return { status: 'success', message: 'Halaman dimuat ulang!', captchaImage: `data:image/png;base64,${captchaBase64}` };
+    } catch (error) {
+        return { status: 'error', message: 'Gagal memuat ulang halaman.' };
+    }
+});
+
+// Endpoint Logout (Fix 10)
+ipcMain.handle('logout', async () => {
+    if (!pageInstance) return { status: 'success', message: 'Sudah logout.' };
+    try {
+        // Arahkan puppeteer ke url logout
+        await pageInstance.goto('https://edabu.bpjs-kesehatan.go.id/Edabu/Home/Logout', { waitUntil: 'domcontentloaded' }).catch(e => console.log(e));
+
+        // Tutup puppeteer sepenuhnya
+        await browserInstance.close();
+        browserInstance = null;
+        pageInstance = null;
+        pesanErrorAlert = null;
+
+        return { status: 'success', message: 'Berhasil Logout.' };
+    } catch (error) {
+        return { status: 'error', message: 'Kesalahan saat logout.' };
+    }
+});
+
+// ==================== SOLVE CAPTCHA (FAILOVER: OpenRouter → Groq) ====================
+
+// Endpoint Solve Captcha dengan failover otomatis
+ipcMain.handle('solve-captcha', async () => {
+    if (!pageInstance) return { status: 'error', message: 'Sesi browser belum ada.' };
+
+    try {
+        const openrouterKey = process.env.OPENROUTER_API_KEY;
+        const groqKey = process.env.GROQ_API_KEY;
+
+        if (!openrouterKey && !groqKey) {
+            return { status: 'error', message: 'Tidak ada API key yang terkonfigurasi.' };
+        }
+
+        console.log('[Captcha Solver] Mengambil screenshot captcha...');
+
+        const captchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
+        if (!captchaElement) {
+            return { status: 'error', message: 'Elemen captcha tidak ditemukan.' };
+        }
+
+        await hideCaptchaIconsIfNeeded(pageInstance);
+        const captchaBase64 = await captchaElement.screenshot({ encoding: 'base64' });
+        const imageData = `data:image/png;base64,${captchaBase64}`;
+
+        console.log('[Captcha Solver] Menjalankan solver dengan failover...');
+        const result = await solveCaptchaImage(imageData, openrouterKey, groqKey);
+
+        console.log(`[Captcha Solver] Berhasil via ${result.provider} (${result.model}): ${result.text}`);
+
+        return {
+            status: 'success',
+            text: result.text,
+            provider: result.provider,
+            model: result.model,
+            message: `Captcha solved via ${result.provider}`
+        };
+
+    } catch (error) {
+        console.error('[Captcha Solver] Error:', error);
+        return { status: 'error', message: 'Gagal solve captcha: ' + error.message };
+    }
+});
+
+// Endpoint Save API Keys (OpenRouter + Groq)
+ipcMain.handle('save-api-keys', async (event, { openrouterKey, groqKey }) => {
+    try {
+        const encryptedEnvPath = path.join(__dirname, '.env.encrypted');
+        const masterKeyPath = path.join(__dirname, '.master-key');
+        
+        // Generate master key if not exists
+        let masterKey;
+        if (fs.existsSync(masterKeyPath)) {
+            masterKey = hexToKey(fs.readFileSync(masterKeyPath, 'utf-8'));
+        } else {
+            masterKey = generateMasterKey();
+            fs.writeFileSync(masterKeyPath, keyToHex(masterKey), 'utf-8');
+        }
+        
+        // Read existing encrypted env if exists
+        let envContent = '';
+        if (fs.existsSync(encryptedEnvPath)) {
+            envContent = fs.readFileSync(encryptedEnvPath, 'utf-8');
+        }
+        
+        // Encrypt both API keys
+        const encryptedOpenRouter = encrypt(openrouterKey, masterKey);
+        const encryptedGroq = encrypt(groqKey, masterKey);
+        
+        // Update or add encrypted keys
+        if (envContent.includes('ENCRYPTED_OPENROUTER=')) {
+            envContent = envContent.replace(/ENCRYPTED_OPENROUTER=.*/g, `ENCRYPTED_OPENROUTER=${encryptedOpenRouter}`);
+        } else {
+            envContent = envContent.trimEnd() + `\nENCRYPTED_OPENROUTER=${encryptedOpenRouter}\n`;
+        }
+        
+        if (envContent.includes('ENCRYPTED_GROQ=')) {
+            envContent = envContent.replace(/ENCRYPTED_GROQ=.*/g, `ENCRYPTED_GROQ=${encryptedGroq}`);
+        } else {
+            envContent = envContent.trimEnd() + `\nENCRYPTED_GROQ=${encryptedGroq}\n`;
+        }
+        
+        fs.writeFileSync(encryptedEnvPath, envContent, 'utf-8');
+        
+        // Update process.env for current session
+        process.env.OPENROUTER_API_KEY = openrouterKey;
+        process.env.GROQ_API_KEY = groqKey;
+        
+        console.log('[Settings] API keys dienkripsi dan disimpan (.env.encrypted + .master-key).');
+        return { status: 'success' };
+    } catch (error) {
+        return { status: 'error', message: error.message };
+    }
+});
+
+// Endpoint Get API Keys
+ipcMain.handle('get-api-keys', async () => {
+    try {
+        const encryptedEnvPath = path.join(__dirname, '.env.encrypted');
+        const masterKeyPath = path.join(__dirname, '.master-key');
+        
+        // If encrypted file exists, decrypt and return
+        if (fs.existsSync(encryptedEnvPath) && fs.existsSync(masterKeyPath)) {
+            const masterKey = hexToKey(fs.readFileSync(masterKeyPath, 'utf-8'));
+            const envContent = fs.readFileSync(encryptedEnvPath, 'utf-8');
+            
+            let openrouterKey = '';
+            let groqKey = '';
+            
+            // Parse encrypted values
+            const openrouterMatch = envContent.match(/ENCRYPTED_OPENROUTER=(.+)/);
+            const groqMatch = envContent.match(/ENCRYPTED_GROQ=(.+)/);
+            
+            if (openrouterMatch && openrouterMatch[1]) {
+                openrouterKey = decrypt(openrouterMatch[1], masterKey);
+            }
+            if (groqMatch && groqMatch[1]) {
+                groqKey = decrypt(groqMatch[1], masterKey);
+            }
+            
+            return { openrouterKey, groqKey };
+        }
+        
+        // Fallback to process.env (backward compatibility)
+        return {
+            openrouterKey: process.env.OPENROUTER_API_KEY || '',
+            groqKey: process.env.GROQ_API_KEY || ''
+        };
+    } catch (error) {
+        console.error('[Settings] Gagal mendekripsi API keys:', error);
+        // Fallback to process.env on error
+        return {
+            openrouterKey: process.env.OPENROUTER_API_KEY || '',
+            groqKey: process.env.GROQ_API_KEY || ''
+        };
+    }
+});
+
+// ==================== CETAK KARTU BPJS ====================
+
+// Endpoint Generate PDF Kartu BPJS
+ipcMain.handle('generate-card-pdf', async (event, data) => {
+    try {
+        console.log('[Main] Menerima request generate kartu BPJS:', data.nama);
+        const pdfBuffer = await generateCardPDF(data);
+
+        // Tampilkan dialog Save As
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: 'Simpan Kartu BPJS',
+            defaultPath: `${data.nama || 'kartu'} ${data.nik || ''}.pdf`.trim(),
+            filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+        });
+
+        if (result.canceled || !result.filePath) {
+            return { status: 'cancelled', message: 'Penyimpanan dibatalkan.' };
+        }
+
+        fs.writeFileSync(result.filePath, pdfBuffer);
+        console.log('[Main] PDF kartu disimpan ke:', result.filePath);
+
+        return { status: 'success', message: `Kartu BPJS berhasil disimpan!`, filePath: result.filePath };
+    } catch (error) {
+        console.error('[Main] Error generate kartu BPJS:', error);
+        return { status: 'error', message: error.message };
+    }
+});
+
+// Endpoint Preview PDF Kartu BPJS (return base64)
+ipcMain.handle('preview-card-pdf', async (event, data) => {
+    try {
+        console.log('[Main] Menerima request preview kartu BPJS:', data.nama);
+        const pdfBuffer = await generateCardPDF(data);
+        const base64 = pdfBuffer.toString('base64');
+        return { status: 'success', pdfBase64: base64 };
+    } catch (error) {
+        console.error('[Main] Error preview kartu BPJS:', error);
+        return { status: 'error', message: error.message };
+    }
+});

@@ -1,0 +1,65 @@
+{
+  "name": "edabu_tools",
+  "version": "1.0.0",
+  "description": "Alat Cek Status BPJS Edabu",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build:folder": "npx @electron/packager . \"Edabu Tools\" --platform=win32 --arch=x64 --out=dist --overwrite --ignore=\"\\.cache|dist|\\.git|build_log|electron-builder\" --asar"
+  },
+  "keywords": [
+    "edabu",
+    "bpjs"
+  ],
+  "author": "Edabu Tools",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@xenova/transformers": "^2.17.2",
+    "bwip-js": "^4.8.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsbarcode": "^3.12.3",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.5.207",
+    "puppeteer": "^24.38.0",
+    "tesseract.js": "^7.0.0",
+    "wavefile": "^11.0.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^19.0.5",
+    "electron": "^40.7.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.edabutools.app",
+    "productName": "Edabu Tools",
+    "toolsets": {
+      "winCodeSign": "1.1.0"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "${productName} v${version} Portable.${ext}"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "card-generator.js",
+      "captcha-solver.js",
+      "crypto-utils.js",
+      "migrate-env.js",
+      "templates/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ]
+  }
+}

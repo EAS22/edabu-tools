@@ -1,0 +1,1292 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edabu Tools</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Figtree', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        primary: {
+                            50: 'oklch(97% 0.01 150)',
+                            100: 'oklch(94% 0.03 150)',
+                            200: 'oklch(88% 0.06 150)',
+                            300: 'oklch(80% 0.10 150)',
+                            400: 'oklch(72% 0.14 150)',
+                            500: 'oklch(65% 0.16 150)',
+                            600: 'oklch(55% 0.16 150)',
+                            700: 'oklch(45% 0.14 150)',
+                            800: 'oklch(38% 0.12 150)',
+                            900: 'oklch(32% 0.10 150)'
+                        },
+                        dark: { 800: '#1e293b', 900: '#0f172a' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .hidden-panel {
+            display: none !important;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .animate-spin-slow {
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-in {
+            animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-slide-up {
+            animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Component Classes */
+        .btn-primary {
+            @apply rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50 disabled:cursor-not-allowed;
+        }
+
+        .btn-secondary {
+            @apply rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition;
+        }
+
+        .input-field {
+            @apply w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20;
+        }
+
+        .card-panel {
+            @apply bg-white rounded-xl shadow-sm border border-slate-200/60 overflow-hidden;
+        }
+
+        .modal-panel {
+            @apply bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden;
+            background-color: rgb(255, 255, 255);
+        }
+
+        /* Smooth transitions with exponential easing */
+        .transition-smooth {
+            transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        /* Focus-visible styles for accessibility (WCAG AA compliant) */
+        button:focus-visible,
+        input:focus-visible,
+        a:focus-visible,
+        [tabindex]:focus-visible {
+            outline: 2px solid oklch(55% 0.16 150);
+            outline-offset: 2px;
+        }
+
+        /* Enhanced focus for modal close buttons */
+        button[onclick*="hide"]:focus-visible,
+        button[onclick*="tutup"]:focus-visible,
+        button[onclick*="close"]:focus-visible {
+            outline: 2px solid oklch(55% 0.16 150);
+            outline-offset: 2px;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 min-h-screen font-sans antialiased">
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        class="hidden-panel fixed inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center transition-opacity">
+        <div class="w-10 h-10 border-[3px] border-slate-200 border-t-primary-600 rounded-xl animate-spin-slow"></div>
+        <p id="loadingText" class="mt-4 text-sm font-medium text-slate-600">Memuat...</p>
+    </div>
+
+    <!-- Toast Alert -->
+    <div id="alertBox" class="hidden-panel fixed top-5 right-5 z-[60] max-w-sm animate-fade-in">
+        <div id="alertInner" class="flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg">
+            <span id="alertIcon" class="mt-0.5 text-lg">ℹ️</span>
+            <div class="flex-1">
+                <p id="alertMsg" class="text-sm font-medium leading-snug"></p>
+            </div>
+            <button onclick="hideAlert()" class="ml-2 text-slate-400 hover:text-slate-600 transition -mt-0.5">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    </div>
+
+    <!-- Status Indicator Top Left -->
+    <div
+        class="fixed top-4 left-5 flex items-center gap-2 z-30 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-xl shadow-sm border border-slate-200/60">
+        <span class="relative flex h-2.5 w-2.5">
+            <span id="statusPing"
+                class="animate-ping absolute inline-flex h-full w-full rounded-xl bg-slate-400 opacity-75 hidden"></span>
+            <span id="statusDot" class="relative inline-flex rounded-xl h-2.5 w-2.5 bg-slate-500"></span>
+        </span>
+        <span id="statusText" class="text-[11px] font-medium text-slate-600">Mengecek Engine...</span>
+    </div>
+
+    <!-- Settings Bottom Right -->
+    <div class="fixed bottom-6 right-6 z-30">
+        <button onclick="bukaSettings()" class="flex items-center justify-center w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm shadow-lg border border-slate-200/60 text-slate-600 hover:text-primary-600 hover:bg-primary-50 hover:shadow-xl transition transform hover:scale-105">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Main Container -->
+    <div class="max-w-2xl mx-auto px-4 py-8">
+
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-2xl font-bold text-slate-800 tracking-tight">Edabu Tools</h1>
+            <p class="mt-1 text-sm text-slate-400">Alat bantu cek status BPJS Kesehatan</p>
+        </div>
+
+        <!-- ==================== LOGIN PANEL ==================== -->
+        <div id="panelLogin" class="animate-slide-up">
+            <div class="card-panel">
+                <div class="px-6 py-6 border-b border-slate-100">
+                    <h2 class="text-lg font-semibold text-slate-800">Selamat Datang</h2>
+                    <p class="text-xs text-slate-500 mt-1">Silakan masuk untuk melanjutkan</p>
+                </div>
+
+                <div class="px-6 py-6 space-y-3">
+                    <!-- Username -->
+                    <div>
+                        <label for="username" class="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
+                        <input type="text" id="username" placeholder="Masukkan username Anda"
+                            class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20">
+                        <p class="text-xs text-slate-400 mt-1.5">Username yang Anda daftarkan di Edabu</p>
+                    </div>
+                    
+                    <!-- Password -->
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                        <input type="password" id="password" placeholder="Masukkan password Anda"
+                            class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20">
+                        <p class="text-xs text-slate-400 mt-1.5">Password akun Edabu Anda</p>
+                    </div>
+
+                    <!-- Captcha: 2 Columns (Image + Input) -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Keamanan</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <!-- Captcha Image -->
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3 flex flex-col items-center justify-center">
+                                <img id="imgCaptchaLogin" src="" alt="Captcha Login"
+                                    class="w-full rounded-lg border border-slate-200 bg-white min-h-[40px]">
+                                <div class="flex gap-2 mt-2">
+                                    <button onclick="refreshCaptcha()"
+                                        class="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                        Ganti
+                                    </button>
+                                    <button onclick="reloadPage()"
+                                        class="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-1 text-[10px] font-medium text-amber-600 hover:bg-amber-50 transition">
+                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                        </svg>
+                                        Reload
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Captcha Input -->
+                            <div class="flex flex-col justify-center">
+                                <input type="text" id="captchaLogin" placeholder="Ketik kode captcha" autocomplete="off"
+                                    class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20 uppercase tracking-widest text-center">
+                                <p class="text-xs text-slate-400 mt-1.5 text-center">Huruf besar/kecil tidak berpengaruh</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="px-6 py-5 bg-slate-50/50 border-t border-slate-100">
+                    <button id="btnLogin" onclick="eksekusiLogin()" disabled
+                        class="w-full rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:ring-2 focus:ring-primary-500/40 disabled:opacity-50 disabled:cursor-not-allowed">
+                        Masuk
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== SEARCH PANEL ==================== -->
+        <div id="panelSearch" class="hidden-panel animate-slide-up">
+            <div class="card-panel">
+                <div class="px-6 py-6 border-b border-slate-100">
+                    <h2 class="text-lg font-semibold text-slate-800">Cek Status BPJS</h2>
+                    <p class="text-xs text-slate-500 mt-1">Masukkan NIK untuk melihat status kepesertaan</p>
+                    <button id="btnLogout" onclick="eksekusiLogout()"
+                        class="absolute top-6 right-6 inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 transition">
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                        </svg>
+                        Logout
+                    </button>
+                </div>
+
+                <div class="px-6 py-6 space-y-3">
+                    <!-- Captcha: 2 Columns (Image + Input) -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1.5">Keamanan</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <!-- Captcha Image -->
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3 flex flex-col items-center justify-center">
+                                <img id="imgCaptchaSearch" src="" alt="Captcha"
+                                    class="w-full rounded-lg border border-slate-200 bg-white min-h-[40px]">
+                                <div class="flex gap-2 mt-2">
+                                    <button onclick="refreshCaptcha()"
+                                        class="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-600 hover:bg-slate-50 transition">
+                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                        Ganti
+                                    </button>
+                                    <button onclick="reloadPage()"
+                                        class="inline-flex items-center gap-1 rounded-md bg-white border border-slate-200 px-2 py-1 text-[10px] font-medium text-amber-600 hover:bg-amber-50 transition">
+                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                        </svg>
+                                        Reload
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Captcha Input -->
+                            <div class="flex flex-col justify-center">
+                                <input type="text" id="captchaSearch" placeholder="Ketik kode captcha" autocomplete="off"
+                                    class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20 uppercase tracking-widest text-center">
+                                <p class="text-xs text-slate-400 mt-1.5 text-center">Huruf besar/kecil tidak berpengaruh</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- NIK -->
+                    <div>
+                        <label for="nik" class="block text-sm font-medium text-slate-700 mb-1.5">NIK Warga</label>
+                        <input type="text" id="nik" placeholder="Masukkan 16 digit NIK" maxlength="16"
+                            class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20 tracking-wider font-mono">
+                        <p class="text-xs text-slate-400 mt-1.5">Nomor Induk Kependudukan 16 digit</p>
+                    </div>
+                </div>
+
+                <div class="px-6 py-5 bg-slate-50/50 border-t border-slate-100">
+                    <button id="btnSearch" onclick="cariDataNIK()"
+                        class="w-full rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 focus:ring-2 focus:ring-primary-500/40">
+                        Cari Data
+                    </button>
+                </div>
+            </div>
+
+            <!-- ==================== RESULTS TABLE ==================== -->
+        </div>
+    </div>
+
+    <!-- ==================== SEARCH RESULTS MODAL ==================== -->
+    <div id="hasilPencarian" class="hidden-panel fixed inset-0 z-40 flex items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onclick="hideHasilPencarian()"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-max max-w-[95vw] mx-4 max-h-[85vh] flex flex-col animate-slide-up overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div>
+                    <h3 class="text-base font-semibold text-slate-800">Hasil Pencarian</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">Data anggota keluarga terdaftar</p>
+                </div>
+                <button onclick="hideHasilPencarian()" class="text-slate-400 hover:text-slate-600 transition p-1">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="overflow-auto flex-1">
+                <table id="tabelHasil" class="w-full text-left">
+                    <thead class="sticky top-0">
+                        <tr class="border-b border-primary-100 bg-primary-50">
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">NIK</th>
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">No
+                                JKN-KIS</th>
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">Nama
+                                Peserta</th>
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">Hubungan
+                            </th>
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">Jenis
+                            </th>
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">Jabatan
+                            </th>
+                            <th class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider">Status
+                            </th>
+                            <th
+                                class="px-4 py-3 font-semibold text-primary-700 text-xs uppercase tracking-wider text-center sticky right-0 bg-primary-50 z-10 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">
+                                Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 [&>tr:hover]:bg-primary-50/50 transition-colors"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL SETTINGS API ==================== -->
+    <div id="settingsDialog" class="hidden-panel fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-slide-up">
+            <div class="px-6 py-5 border-b border-slate-100 flex justify-between items-start">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-800">Pengaturan API</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Auto-solve Captcha (Failover Mode)</p>
+                </div>
+                <button onclick="tutupSettings()" class="text-slate-400 hover:text-slate-600 transition rounded-lg p-1.5 hover:bg-slate-100">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="p-6 space-y-5">
+                <!-- OpenRouter API Key -->
+                <div>
+                    <div class="flex items-center gap-2 mb-1.5">
+                        <label class="block text-sm font-medium text-slate-700">
+                            OpenRouter API Key
+                        </label>
+                        <span class="inline-flex items-center rounded-md bg-primary-50 px-2 py-0.5 text-[10px] font-medium text-primary-700 ring-1 ring-inset ring-primary-600/20">Prioritas 1</span>
+                    </div>
+                    <input type="password" id="openrouterKey" placeholder="sk-or-v1-..."
+                        class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20 font-mono tracking-tight">
+                    <p class="text-[11px] text-slate-500 mt-1.5">Dapatkan gratis di <a href="https://openrouter.ai" target="_blank" class="text-primary-700 hover:underline font-medium">openrouter.ai</a> <span class="text-slate-400">(50 req/hari gratis)</span></p>
+                </div>
+                <!-- Groq API Key -->
+                <div>
+                    <div class="flex items-center gap-2 mb-1.5">
+                        <label class="block text-sm font-medium text-slate-700">
+                            Groq API Key
+                        </label>
+                        <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-500/10">Failover</span>
+                    </div>
+                    <input type="password" id="groqKey" placeholder="gsk_..."
+                        class="w-full rounded-lg border border-slate-300 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-primary-500 focus:bg-white focus:ring-2 focus:ring-primary-500/20 font-mono tracking-tight">
+                    <p class="text-[11px] text-slate-500 mt-1.5">Dapatkan gratis di <a href="https://console.groq.com" target="_blank" class="text-primary-700 hover:underline font-medium">console.groq.com</a> <span class="text-slate-400">(14.400 req/hari)</span></p>
+                </div>
+                <!-- Info -->
+                <div class="bg-primary-50 border border-primary-200 rounded-xl px-3.5 py-3">
+                    <div class="flex gap-2.5">
+                        <svg class="w-4 h-4 text-primary-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p class="text-xs text-primary-800 leading-relaxed">
+                            <strong class="font-semibold">Failover Mode:</strong> Sistem akan coba OpenRouter dulu. Jika gagal/error, otomatis beralih ke Groq tanpa interupsi.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+                <button onclick="tutupSettings()"
+                    class="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 transition">Batal</button>
+                <button onclick="simpanApiKeys()" id="btnSaveKeys"
+                    class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 transition">Simpan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== LOGOUT CONFIRMATION DIALOG ==================== -->
+    <div id="logoutDialog" class="hidden-panel fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onclick="hideLogoutDialog()"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-sm mx-4 animate-slide-up">
+            <div class="p-6 text-center">
+                <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-50 to-primary-100/60 shadow-sm">
+                    <svg class="w-8 h-8 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                </div>
+                <h3 class="text-lg font-semibold text-slate-800 mb-1">Sampai Jumpa</h3>
+                <p id="logoutDialogMsg" class="text-sm text-slate-500">Anda akan logout dari Edabu. Silakan kembali lagi nanti.</p>
+            </div>
+            <div class="flex border-t border-slate-100">
+                <button onclick="hideLogoutDialog()"
+                    class="flex-1 py-3.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition rounded-bl-xl border-r border-slate-100">
+                    Tetap Di Sini
+                </button>
+                <button onclick="hideLogoutDialog(); prosesLogout()"
+                    class="flex-1 py-3.5 text-sm font-semibold text-primary-700 hover:bg-primary-50 transition rounded-br-xl">
+                    Ya, Logout
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== CETAK KARTU BPJS MODAL ==================== -->
+    <div id="cetakKartuModal" class="hidden-panel fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/70 backdrop-blur-sm" onclick="hideCetakKartu()"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col overflow-hidden animate-slide-up">
+            <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
+                <div>
+                    <h3 class="text-sm font-semibold text-slate-800">Cetak Kartu BPJS</h3>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Lengkapi data untuk mencetak kartu</p>
+                </div>
+                <button onclick="hideCetakKartu()" class="text-slate-400 hover:text-slate-600 transition p-1">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="px-5 py-4 space-y-3.5 overflow-y-auto flex-1">
+                <!-- Identitas Section -->
+                <div>
+                    <div class="flex items-center gap-2 mb-2.5">
+                        <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                        <span class="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Identitas</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">NIK</label>
+                            <input type="text" id="cetakNik" readonly class="w-full rounded-md border border-slate-200 bg-slate-100/70 px-2.5 py-2 text-sm text-slate-600 font-mono tracking-wide uppercase placeholder-slate-400">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">No. Kartu BPJS (JKN)</label>
+                            <input type="text" id="cetakJkn" placeholder="13 digit" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 font-mono tracking-wide uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">Nama Lengkap</label>
+                            <input type="text" id="cetakNama" placeholder="Sesuai KTP" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">Tgl Lahir <span class="text-slate-400 font-normal">(dd-mm-yyyy)</span></label>
+                            <input type="text" id="cetakTglLahir" placeholder="dd-mm-yyyy" maxlength="10" oninput="formatTglInput(this)" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase tracking-wide placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Alamat Section -->
+                <div class="pt-1.5">
+                    <div class="flex items-center gap-2 mb-2.5">
+                        <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 0111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span class="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Alamat</span>
+                    </div>
+                    <div class="space-y-2.5">
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500 mb-1">Alamat Jalan</label>
+                            <input type="text" id="cetakAlamat" placeholder="Nama jalan, nomor rumah" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                        </div>
+                        <div class="grid grid-cols-6 gap-3">
+                            <div class="col-span-1">
+                                <label class="block text-[11px] font-medium text-slate-500 mb-1">RT</label>
+                                <input type="text" id="cetakRT" placeholder="001" maxlength="4" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                            </div>
+                            <div class="col-span-1">
+                                <label class="block text-[11px] font-medium text-slate-500 mb-1">RW</label>
+                                <input type="text" id="cetakRW" placeholder="002" maxlength="4" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                            </div>
+                            <div class="col-span-4">
+                                <label class="block text-[11px] font-medium text-slate-500 mb-1">Desa/Kelurahan</label>
+                                <input type="text" id="cetakDesa" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-500 mb-1">Kecamatan</label>
+                                <input type="text" id="cetakKec" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-500 mb-1">Kabupaten/Kota</label>
+                                <input type="text" id="cetakKab" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Faskes Section -->
+                <div class="pt-1.5">
+                    <div>
+                        <label class="block text-[11px] font-medium text-slate-500 mb-1">Faskes Tingkat 1</label>
+                        <input type="text" id="cetakFaskes" placeholder="Puskesmas / Klinik / Dokter Praktik" class="w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 uppercase placeholder-slate-400 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition">
+                    </div>
+                </div>
+
+                <!-- Remember Checkbox -->
+                <div class="flex items-center gap-2 pt-1.5">
+                    <input type="checkbox" id="cetakIngatAlamat" class="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer">
+                    <label for="cetakIngatAlamat" class="text-[11px] text-slate-600 cursor-pointer select-none">Ingat alamat untuk pencetakan berikutnya</label>
+                </div>
+            </div>
+            <div class="px-5 py-3.5 border-t border-slate-100 flex gap-2.5 shrink-0 bg-white">
+                <button onclick="hideCetakKartu()"
+                    class="flex-1 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition shadow-sm">
+                    Batal
+                </button>
+                <button onclick="cetakKartuPDF()"
+                    class="flex-1 rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 hover:shadow transition">
+                    Cetak & Simpan PDF
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Preview Modal -->
+    <div id="pdfPreviewModal" class="hidden-panel fixed inset-0 z-50 flex items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/80 backdrop-blur-md" onclick="closePdfPreview()"></div>
+        <div class="relative bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col overflow-hidden animate-slide-up">
+            <!-- Header -->
+            <div class="px-6 py-5 border-b border-slate-200 bg-white shrink-0">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-slate-800">Preview Kartu BPJS</h3>
+                        <p class="text-xs text-slate-500 mt-0.5">Tinjau dokumen sebelum diunduh</p>
+                    </div>
+                </div>
+                <button onclick="closePdfPreview()" class="absolute top-5 right-5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-2 transition">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- Body -->
+            <div class="p-5 bg-white overflow-y-auto flex-1">
+                <div class="w-full max-h-[280px] min-h-[220px] aspect-[182/56] bg-slate-100 rounded-xl border border-slate-200 overflow-hidden shadow-inner relative">
+                    <!-- Loading State -->
+                    <div id="pdfPreviewLoading" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-10">
+                        <div class="relative">
+                            <div class="animate-spin rounded-full h-14 w-14 border-4 border-slate-200"></div>
+                            <div class="animate-spin rounded-full h-14 w-14 border-4 border-emerald-600 border-t-transparent absolute top-0 left-0"></div>
+                        </div>
+                        <p class="text-sm font-medium text-slate-600 mt-4">Memuat dokumen...</p>
+                    </div>
+                    <!-- PDF.js Preview Container -->
+                    <div id="pdfPreviewViewport" class="h-full overflow-auto p-4">
+                        <div class="flex h-full items-center justify-center text-center text-sm text-slate-400">
+                            Preview kartu akan tampil di sini.
+                        </div>
+                    </div>
+                    <!-- Error State -->
+                    <div id="pdfPreviewError" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm z-10">
+                        <div class="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mb-3">
+                            <svg class="w-7 h-7 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <p class="text-sm font-medium text-red-600">Gagal memuat preview PDF</p>
+                        <p class="text-xs text-slate-500 mt-1">Periksa koneksi internet Anda</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Footer -->
+            <div class="px-6 py-5 border-t border-slate-100 bg-white flex items-center justify-end gap-3 shrink-0">
+                <button onclick="closePdfPreview()" class="px-6 py-2.5 text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 hover:border-slate-400 rounded-xl transition font-medium shadow-sm">
+                    Batal
+                </button>
+                <button onclick="downloadPdfFromPreview()" id="downloadPdfBtn" class="px-6 py-2.5 text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition font-medium shadow-md hover:shadow-lg flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    Unduh PDF
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== UI HELPERS ====================
+        let alertTimer = null;
+
+        function showLoading(text) {
+            document.getElementById('loadingText').innerText = text || 'Memuat...';
+            document.getElementById('loadingOverlay').classList.remove('hidden-panel');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.add('hidden-panel');
+        }
+
+        function showAlert(msg, type = 'error') {
+            const box = document.getElementById('alertBox');
+            const inner = document.getElementById('alertInner');
+            const icon = document.getElementById('alertIcon');
+            const msgEl = document.getElementById('alertMsg');
+
+            msgEl.innerText = msg;
+
+            // Reset classes
+            inner.className = 'flex items-start gap-3 rounded-lg border px-4 py-3 shadow-lg';
+
+            if (type === 'success') {
+                inner.classList.add('bg-emerald-50', 'border-emerald-200', 'text-emerald-800');
+                icon.innerText = '✅';
+            } else {
+                inner.classList.add('bg-red-50', 'border-red-200', 'text-red-800');
+                icon.innerText = '⚠️';
+            }
+
+            box.classList.remove('hidden-panel');
+            box.classList.add('animate-fade-in');
+
+            if (alertTimer) clearTimeout(alertTimer);
+            alertTimer = setTimeout(() => hideAlert(), 6000);
+        }
+
+        function hideAlert() {
+            document.getElementById('alertBox').classList.add('hidden-panel');
+        }
+
+        // ==================== MAIN LOGIC ====================
+        async function initAwal() {
+            showLoading('Menyiapkan Sesi Browser Edabu...');
+            const savedUser = localStorage.getItem('edabu_user');
+            const savedPass = localStorage.getItem('edabu_pass');
+            if (savedUser) document.getElementById('username').value = savedUser;
+            if (savedPass) document.getElementById('password').value = savedPass;
+
+            // Load API keys yang tersimpan
+            try {
+                const keys = await window.electronAPI.getApiKeys();
+                if (keys.openrouterKey) {
+                    document.getElementById('openrouterKey').value = keys.openrouterKey;
+                }
+                if (keys.groqKey) {
+                    document.getElementById('groqKey').value = keys.groqKey;
+                }
+            } catch (e) { /* ignore */ }
+
+            try {
+                const data = await window.electronAPI.initSession();
+                if (data.status === 'success') {
+                    setCaptchaAndSolve('login', data.captchaImage);
+                    document.getElementById('btnLogin').innerText = 'Eksekusi Login';
+                    document.getElementById('btnLogin').disabled = false;
+                } else {
+                    showAlert(data.message);
+                }
+            } catch (err) {
+                showAlert('Gagal terhubung ke Puppeteer Backend.');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function eksekusiLogin() {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+            const cap = document.getElementById('captchaLogin').value;
+            const btn = document.getElementById('btnLogin');
+
+            if (!user || !pass || !cap) return showAlert('Harap isi semua kolom!');
+
+            showLoading('Sedang Memproses Login...');
+            btn.innerText = 'Proses Login...';
+            btn.disabled = true;
+
+            try {
+                const data = await window.electronAPI.executeLogin({ username: user, password: pass, captcha: cap });
+
+                if (data.status === 'success') {
+                    localStorage.setItem('edabu_user', user);
+                    localStorage.setItem('edabu_pass', pass);
+
+                    document.getElementById('panelLogin').classList.add('hidden-panel');
+                    document.getElementById('panelSearch').classList.remove('hidden-panel');
+                    setCaptchaAndSolve('search', data.nextCaptchaImage);
+                    showAlert('Login Berhasil!', 'success');
+                } else {
+                    showAlert(data.message);
+                    btn.innerText = 'Eksekusi Login';
+                    btn.disabled = false;
+                    document.getElementById('captchaLogin').value = '';
+                    if (data.captchaImage) {
+                        setCaptchaAndSolve('login', data.captchaImage);
+                    }
+                }
+            } catch (err) {
+                showAlert('Terjadi kesalahan sistem.');
+                btn.innerText = 'Eksekusi Login';
+                btn.disabled = false;
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function cariDataNIK() {
+            const nik = document.getElementById('nik').value;
+            const cap = document.getElementById('captchaSearch').value;
+            const btn = document.getElementById('btnSearch');
+
+            if (!nik || !cap) return showAlert('Isi NIK dan Captcha!');
+            if (nik.length !== 16 || !/^\d+$/.test(nik)) return showAlert('NIK harus terdiri dari 16 digit angka!');
+
+            showLoading(`Mengambil Data NIK ${nik}...`);
+            btn.innerText = 'Mencari Data...';
+            btn.disabled = true;
+            document.getElementById('hasilPencarian').classList.add('hidden-panel');
+
+            try {
+                const data = await window.electronAPI.searchNik({ nik: nik, captcha: cap });
+
+                if (data.status === 'success') {
+                    const tbody = document.querySelector('#tabelHasil tbody');
+                    tbody.innerHTML = '';
+
+                    data.data.forEach(org => {
+                        const tr = document.createElement('tr');
+                        tr.className = org.is_target
+                            ? 'bg-amber-50 font-semibold'
+                            : 'hover:bg-slate-50 transition-colors';
+                        tr.innerHTML = `
+    <td class="px-4 py-3 text-sm text-slate-700">${org.nik}</td>
+    <td class="px-4 py-3 text-sm text-slate-700">${org.no_jkn}</td>
+    <td class="px-4 py-3 text-sm text-slate-800 whitespace-nowrap">${org.nama}</td>
+    <td class="px-4 py-3 text-sm text-slate-600">${org.hubungan}</td>
+    <td class="px-4 py-3 text-sm text-slate-600">${org.jenis_kepesertaan}</td>
+    <td class="px-4 py-3 text-sm text-slate-600">${org.jabatan}</td>
+                            <td class="px-4 py-3">
+        <span class="inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-medium ${org.status && org.status.toLowerCase().includes('aktif') ? 'bg-primary-100 text-primary-800' : 'bg-red-100 text-red-800'}">${org.status}</span>
+    </td>
+    <td class="px-4 py-3 text-center sticky right-0 z-10 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)] ${org.is_target ? 'bg-primary-50' : 'bg-white'}">
+        <div class="flex items-center justify-center gap-1.5">
+        <button onclick="copyData(this)" data-nik="${org.nik}" data-jkn="${org.no_jkn}" data-nama="${org.nama}" data-shdk="${org.hubungan}" data-jenis="${org.jenis_kepesertaan}" data-jabatan="${org.jabatan}" data-status="${org.status}"
+            class="inline-flex items-center gap-1 rounded-lg bg-primary-50 border border-primary-200 px-2.5 py-1.5 text-xs font-medium text-primary-600 hover:bg-primary-100 transition">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+            Copy
+        </button>
+        <button onclick="bukaCetakKartu(this)" data-nik="${org.nik}" data-jkn="${org.no_jkn}" data-nama="${org.nama}"
+            class="inline-flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-xs font-medium text-emerald-600 hover:bg-emerald-100 transition">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+            Cetak
+        </button>
+        </div>
+    </td>
+    `;
+                        tbody.appendChild(tr);
+                    });
+
+                    document.getElementById('hasilPencarian').classList.remove('hidden-panel');
+                    showAlert('Data berhasil ditarik!', 'success');
+                    if (data.nextCaptchaImage) {
+                        setCaptchaAndSolve('search', data.nextCaptchaImage);
+                    }
+                } else {
+                    showAlert(data.message);
+                    if (data.nextCaptchaImage) {
+                        setCaptchaAndSolve('search', data.nextCaptchaImage);
+                    }
+                }
+            } catch (err) {
+                showAlert('Gagal mengekstrak data.');
+            } finally {
+                hideLoading();
+                btn.innerText = 'Cari Data Warga';
+                btn.disabled = false;
+            }
+        }
+
+        async function refreshCaptcha() {
+            showLoading('Menyegarkan Gambar Captcha...');
+            try {
+                const data = await window.electronAPI.refreshCaptcha();
+                if (data.status === 'success') {
+                    // Tentukan panel aktif untuk solve
+                    if (!document.getElementById('panelLogin').classList.contains('hidden-panel')) {
+                        setCaptchaAndSolve('login', data.captchaImage);
+                    } else {
+                        setCaptchaAndSolve('search', data.captchaImage);
+                    }
+                }
+            } catch (err) {
+                showAlert('Gagal mengganti captcha');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function reloadPage() {
+            showLoading('Me-refresh keseluruhan halaman Edabu...');
+            try {
+                const data = await window.electronAPI.reloadPage();
+                if (data.status === 'success') {
+                    if (!document.getElementById('panelLogin').classList.contains('hidden-panel')) {
+                        setCaptchaAndSolve('login', data.captchaImage);
+                    } else {
+                        setCaptchaAndSolve('search', data.captchaImage);
+                    }
+                    showAlert('Halaman berhasil dimuat ulang!', 'success');
+                }
+            } catch (err) {
+                showAlert('Gagal memuat ulang halaman.');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function hideHasilPencarian() {
+            document.getElementById('hasilPencarian').classList.add('hidden-panel');
+        }
+
+        function copyData(btn) {
+            const text = `NIK: ${btn.dataset.nik}\nNO BPJS: ${btn.dataset.jkn}\nNAMA: ${btn.dataset.nama}\nSHDK: ${btn.dataset.shdk}\nJENIS: ${btn.dataset.jenis}\nJABATAN: ${btn.dataset.jabatan}\nSTATUS: ${btn.dataset.status}`;
+            navigator.clipboard.writeText(text).then(() => {
+                const original = btn.innerHTML;
+                btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Copied!`;
+                btn.classList.remove('bg-primary-50', 'border-primary-200', 'text-primary-600');
+                btn.classList.add('bg-emerald-50', 'border-emerald-200', 'text-emerald-600');
+                setTimeout(() => {
+                    btn.innerHTML = original;
+                    btn.classList.remove('bg-emerald-50', 'border-emerald-200', 'text-emerald-600');
+                    btn.classList.add('bg-primary-50', 'border-primary-200', 'text-primary-600');
+                }, 1500);
+            }).catch(() => showAlert('Gagal menyalin data.'));
+        }
+        // Tampilkan dialog konfirmasi logout (TailGrids-style)
+        let pendingQuitAfterLogout = false; // true = logout dipicu tombol X (harus quit setelahnya)
+
+        function eksekusiLogout(msg, quitAfter = false) {
+            pendingQuitAfterLogout = quitAfter;
+            const dialogMsg = document.getElementById('logoutDialogMsg');
+            dialogMsg.innerText = msg || 'Apakah Anda yakin ingin logout dari Edabu?';
+            document.getElementById('logoutDialog').classList.remove('hidden-panel');
+        }
+
+        function hideLogoutDialog() {
+            document.getElementById('logoutDialog').classList.add('hidden-panel');
+            pendingQuitAfterLogout = false;
+        }
+
+        async function prosesLogout() {
+            showLoading('Mengakhiri sesi Edabu...');
+            try {
+                const data = await window.electronAPI.logout();
+                if (data.status === 'success') {
+                    if (pendingQuitAfterLogout) {
+                        // Logout dipicu tombol X → tutup aplikasi sepenuhnya
+                        window.electronAPI.quitApp();
+                        return;
+                    }
+                    // Logout normal via tombol Logout → kembali ke halaman login
+                    document.getElementById('panelSearch').classList.add('hidden-panel');
+                    document.getElementById('panelLogin').classList.remove('hidden-panel');
+                    document.getElementById('nik').value = '';
+                    document.getElementById('tabelHasil').querySelector('tbody').innerHTML = '';
+                    document.getElementById('hasilPencarian').classList.add('hidden-panel');
+
+                    showAlert('Logout Sukses, sesi Edabu ditutup.', 'success');
+                    initAwal();
+                }
+            } catch (e) {
+                showAlert('Gagal melakukan logout');
+                hideLoading();
+            }
+        }
+
+        // IPC listener: ketika user klik X pada window saat masih login
+        if (window.electronAPI && window.electronAPI.onForceLogoutPrompt) {
+            window.electronAPI.onForceLogoutPrompt(() => {
+                eksekusiLogout('Anda harus logout sebelum menutup aplikasi.', true);
+            });
+        }
+
+        // IPC listener: update indikator status puppeteer real-time
+        if (window.electronAPI && window.electronAPI.onPuppeteerStatus) {
+            window.electronAPI.onPuppeteerStatus((event, statusObj) => {
+                const dot = document.getElementById('statusDot');
+                const ping = document.getElementById('statusPing');
+                const txt = document.getElementById('statusText');
+
+                if (statusObj.status === 'connected') {
+                    dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500';
+                    ping.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75';
+                    ping.classList.remove('hidden');
+                    txt.innerText = 'Engine Berjalan Baik';
+                    txt.className = 'text-[11px] font-medium text-emerald-700';
+                } else if (statusObj.status === 'disconnected') {
+                    dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500';
+                    ping.classList.add('hidden');
+                    txt.innerText = 'Engine Terhenti/Error';
+                    txt.className = 'text-[11px] font-medium text-red-700';
+                }
+            });
+        }
+
+// ==================== API KEYS (DUAL: OpenRouter + Groq) ====================
+async function simpanApiKeys() {
+    const openrouterKey = document.getElementById('openrouterKey').value.trim();
+    const groqKey = document.getElementById('groqKey').value.trim();
+
+    if (!openrouterKey && !groqKey) {
+        return showAlert('Masukkan minimal satu API key.');
+    }
+
+    const btn = document.getElementById('btnSaveKeys');
+    btn.disabled = true;
+    btn.innerText = 'Menyimpan...';
+
+    try {
+        const result = await window.electronAPI.saveApiKeys({ openrouterKey, groqKey });
+        if (result.status === 'success') {
+            showAlert('API keys berhasil disimpan!', 'success');
+            tutupSettings();
+        } else {
+            showAlert(result.message || 'Gagal menyimpan API keys.');
+        }
+    } catch (err) {
+        showAlert('Error menyimpan API keys.');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = 'Simpan';
+    }
+}
+
+function bukaSettings() {
+    document.getElementById('settingsDialog').classList.remove('hidden-panel');
+}
+function tutupSettings() {
+    document.getElementById('settingsDialog').classList.add('hidden-panel');
+}
+
+// ==================== AUTO-SOLVE CAPTCHA ====================
+let _solvingCaptcha = false;
+
+/**
+ * Set captcha image dan otomatis jalankan solver di background.
+ * Tidak memblokir user — user bisa ketik manual selagi solver bekerja.
+ * Jika user sudah mengisi captcha input sebelum solver selesai, hasil solver tidak menimpa.
+ *
+ * @param {string} panel - 'login' atau 'search'
+ * @param {string} captchaImageSrc - data:image/png;base64,... dari captcha
+ */
+function setCaptchaAndSolve(panel, captchaImageSrc) {
+    // Set gambar captcha
+    if (panel === 'login') {
+        document.getElementById('imgCaptchaLogin').src = captchaImageSrc;
+    } else {
+        document.getElementById('imgCaptchaSearch').src = captchaImageSrc;
+    }
+
+    // Kosongkan input captcha
+    const inputId = panel === 'login' ? 'captchaLogin' : 'captchaSearch';
+    document.getElementById(inputId).value = '';
+
+    // Jangan trigger jika sudah sedang solving
+    if (_solvingCaptcha) return;
+
+    // Solve otomatis di background
+    _solvingCaptcha = true;
+    const inputEl = document.getElementById(inputId);
+
+    window.electronAPI.solveCaptcha().then(result => {
+        // Hanya isi jika user belum ketik manual
+        if (result.status === 'success' && !inputEl.value.trim()) {
+            inputEl.value = result.text;
+        }
+    }).catch(err => {
+        console.log('Auto-solve gagal:', err);
+    }).finally(() => {
+        _solvingCaptcha = false;
+    });
+}
+
+        // ==================== CETAK KARTU BPJS ====================
+        function formatTglInput(el) {
+            // Strip non-digit
+            var raw = el.value.replace(/[^0-9]/g, '');
+            var formatted = '';
+            for (var i = 0; i < raw.length && i < 8; i++) {
+                if (i === 2 || i === 4) formatted += '-';
+                formatted += raw[i];
+            }
+            el.value = formatted;
+        }
+
+        function bukaCetakKartu(btn) {
+            document.getElementById('cetakNik').value = btn.dataset.nik || '';
+            document.getElementById('cetakJkn').value = btn.dataset.jkn || '';
+            document.getElementById('cetakNama').value = btn.dataset.nama || '';
+            document.getElementById('cetakTglLahir').value = '';
+            muatAlamatTersimpan();
+            document.getElementById('cetakKartuModal').classList.remove('hidden-panel');
+        }
+
+        function hideCetakKartu() {
+            document.getElementById('cetakKartuModal').classList.add('hidden-panel');
+        }
+
+        function formatTglForPDF(ddmmyyyy) {
+            if (!ddmmyyyy) return '';
+            var parts = ddmmyyyy.split('-');
+            if (parts.length !== 3) return ddmmyyyy;
+            return parts[2] + '-' + parts[1] + '-' + parts[0];
+        }
+
+        async function cetakKartuPDF() {
+            var nik = document.getElementById('cetakNik').value;
+            var noJkn = document.getElementById('cetakJkn').value;
+            var nama = document.getElementById('cetakNama').value;
+            var tglLahir = document.getElementById('cetakTglLahir').value;
+            var alamat = document.getElementById('cetakAlamat').value;
+            var rt = document.getElementById('cetakRT').value;
+            var rw = document.getElementById('cetakRW').value;
+            var desa = document.getElementById('cetakDesa').value;
+            var kec = document.getElementById('cetakKec').value;
+            var kab = document.getElementById('cetakKab').value;
+            var faskes = document.getElementById('cetakFaskes').value;
+
+            if (!noJkn || !nama) {
+                return showAlert('No Kartu JKN dan Nama wajib diisi!');
+            }
+
+            if (tglLahir && tglLahir.length !== 10) {
+                return showAlert('Format tanggal lahir harus dd-mm-yyyy (10 karakter)!');
+            }
+
+            if (document.getElementById('cetakIngatAlamat').checked) {
+                simpanAlamatTerakhir();
+            } else {
+                hapusAlamatTersimpan();
+            }
+
+            var data = {
+                nomor_kartu: noJkn,
+                nik: nik,
+                nama: nama,
+                tgl_lahir: formatTglForPDF(tglLahir),
+                alamat_jalan: alamat,
+                rt: rt,
+                rw: rw,
+                faskes: faskes,
+                desaInfo: (desa || kec || kab) ? {
+                    nama_desa: desa,
+                    kecamatan: kec,
+                    kabupaten_kota: kab
+                } : null
+            };
+
+            showLoading('Membuat PDF kartu BPJS...');
+            try {
+                // Show preview instead of direct download
+                await showPdfPreview(data);
+            } catch (err) {
+                showAlert('Gagal membuat preview PDF kartu BPJS.');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Store current card data for download
+        let currentPdfPreviewData = null;
+        let pdfJsLibPromise = null;
+        let currentPdfRenderToken = 0;
+
+        async function getPdfJsLib() {
+            if (!pdfJsLibPromise) {
+                pdfJsLibPromise = import('./node_modules/pdfjs-dist/legacy/build/pdf.mjs').then((pdfjsLib) => {
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs', window.location.href).toString();
+                    return pdfjsLib;
+                });
+            }
+
+            return pdfJsLibPromise;
+        }
+
+        function base64ToUint8Array(base64) {
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+
+            return bytes;
+        }
+
+        async function renderPdfPreview(pdfBase64) {
+            const renderToken = ++currentPdfRenderToken;
+            const pdfjsLib = await getPdfJsLib();
+            const viewportEl = document.getElementById('pdfPreviewViewport');
+
+            viewportEl.innerHTML = '';
+
+            const pdfData = base64ToUint8Array(pdfBase64);
+            const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+            const pdfDoc = await loadingTask.promise;
+
+            if (renderToken !== currentPdfRenderToken) return;
+
+            const pagesWrapper = document.createElement('div');
+            pagesWrapper.className = 'mx-auto flex min-h-full w-full max-w-3xl flex-col items-center gap-4';
+
+            for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber++) {
+                const page = await pdfDoc.getPage(pageNumber);
+                if (renderToken !== currentPdfRenderToken) return;
+
+                const baseViewport = page.getViewport({ scale: 1 });
+                const availableWidth = Math.max(320, Math.min(viewportEl.clientWidth - 40, 860));
+                const scale = Math.min(1.6, availableWidth / baseViewport.width);
+                const viewport = page.getViewport({ scale });
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d', { alpha: false });
+                canvas.width = Math.ceil(viewport.width);
+                canvas.height = Math.ceil(viewport.height);
+                canvas.className = 'block h-auto w-full';
+
+                const canvasCard = document.createElement('div');
+                canvasCard.className = 'w-full overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200';
+                canvasCard.appendChild(canvas);
+                pagesWrapper.appendChild(canvasCard);
+
+                await page.render({ canvasContext: context, viewport }).promise;
+            }
+
+            if (renderToken !== currentPdfRenderToken) return;
+            viewportEl.appendChild(pagesWrapper);
+        }
+
+        // Show PDF preview modal
+        async function showPdfPreview(data) {
+            currentPdfPreviewData = data;
+            
+            // Reset UI
+            document.getElementById('pdfPreviewLoading').classList.remove('hidden');
+            document.getElementById('pdfPreviewError').classList.add('hidden');
+            document.getElementById('pdfPreviewModal').classList.remove('hidden-panel');
+            document.getElementById('pdfPreviewViewport').innerHTML = '<div class="flex h-full items-center justify-center text-center text-sm text-slate-400">Menyiapkan preview kartu...</div>';
+            
+            try {
+                const result = await window.electronAPI.previewCardPDF(data);
+                
+                if (result.status === 'success' && result.pdfBase64) {
+                    await renderPdfPreview(result.pdfBase64);
+                    document.getElementById('pdfPreviewLoading').classList.add('hidden');
+                } else {
+                    throw new Error(result.message || 'Failed to generate preview');
+                }
+            } catch (error) {
+                console.error('Preview error:', error);
+                document.getElementById('pdfPreviewLoading').classList.add('hidden');
+                document.getElementById('pdfPreviewError').classList.remove('hidden');
+                document.getElementById('pdfPreviewError').querySelector('p').textContent = 'Gagal memuat preview: ' + error.message;
+            }
+        }
+
+        // Close PDF preview modal
+        function closePdfPreview() {
+            currentPdfRenderToken += 1;
+            document.getElementById('pdfPreviewModal').classList.add('hidden-panel');
+            document.getElementById('pdfPreviewViewport').innerHTML = '<div class="flex h-full items-center justify-center text-center text-sm text-slate-400">Preview kartu akan tampil di sini.</div>';
+            currentPdfPreviewData = null;
+        }
+
+        // Download PDF from preview
+        async function downloadPdfFromPreview() {
+            if (!currentPdfPreviewData) {
+                alert('Data tidak tersedia. Silakan coba lagi.');
+                return;
+            }
+            
+            const btn = document.getElementById('downloadPdfBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> Menyimpan...';
+            
+            try {
+                const result = await window.electronAPI.generateCardPDF(currentPdfPreviewData);
+                
+                if (result.status === 'success') {
+                    closePdfPreview();
+                    hideCetakKartu();
+                    showAlert('Kartu BPJS berhasil disimpan!', 'success');
+                } else if (result.status === 'cancelled') {
+                    // User cancelled save dialog - do nothing
+                } else {
+                    showAlert(result.message || 'Gagal menyimpan PDF.');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg> Unduh PDF';
+            }
+        }
+
+        function simpanAlamatTerakhir() {
+            var obj = {
+                tglLahir: document.getElementById('cetakTglLahir').value,
+                alamat: document.getElementById('cetakAlamat').value,
+                rt: document.getElementById('cetakRT').value,
+                rw: document.getElementById('cetakRW').value,
+                desa: document.getElementById('cetakDesa').value,
+                kec: document.getElementById('cetakKec').value,
+                kab: document.getElementById('cetakKab').value,
+                faskes: document.getElementById('cetakFaskes').value
+            };
+            localStorage.setItem('edabu_alamat_cetak', JSON.stringify(obj));
+        }
+
+        function muatAlamatTersimpan() {
+            var saved = localStorage.getItem('edabu_alamat_cetak');
+            if (!saved) return;
+            try {
+                var d = JSON.parse(saved);
+                document.getElementById('cetakTglLahir').value = d.tglLahir || '';
+                document.getElementById('cetakAlamat').value = d.alamat || '';
+                document.getElementById('cetakRT').value = d.rt || '';
+                document.getElementById('cetakRW').value = d.rw || '';
+                document.getElementById('cetakDesa').value = d.desa || '';
+                document.getElementById('cetakKec').value = d.kec || '';
+                document.getElementById('cetakKab').value = d.kab || '';
+                document.getElementById('cetakFaskes').value = d.faskes || '';
+                document.getElementById('cetakIngatAlamat').checked = true;
+            } catch (e) { /* ignore */ }
+        }
+
+        function hapusAlamatTersimpan() {
+            localStorage.removeItem('edabu_alamat_cetak');
+        }
+
+        window.onload = initAwal;
+    </script>
+
+</body>
+
+</html>

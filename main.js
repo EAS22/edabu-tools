@@ -1,15 +1,49 @@
 process.on('uncaughtException', (err) => console.error('UNCAUGHT:', err));
-require('dotenv').config();
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const puppeteer = require('puppeteer-core');
-const { generateCardPDF } = require('./card-generator');
-const { solveCaptchaImage } = require('./captcha-solver');
-const { dialog } = require('electron');
-const { generateMasterKey, encrypt, decrypt, keyToHex, hexToKey } = require('./crypto-utils');
+
+let dotenvConfigured = false;
+let puppeteer = null;
+let generateCardPDF = null;
+let solveCaptchaImage = null;
+let generateMasterKey = null;
+let encrypt = null;
+let decrypt = null;
+let keyToHex = null;
+let hexToKey = null;
 
 const API_KEY_STORE_DIR = 'bootstrap-secrets';
+const MIN_SPLASH_MS = 1200;
+
+function ensureDotenvConfigured() {
+    if (!dotenvConfigured) {
+        require('dotenv').config();
+        dotenvConfigured = true;
+    }
+}
+
+function ensureCryptoUtils() {
+    if (!generateMasterKey || !encrypt || !decrypt || !keyToHex || !hexToKey) {
+        ({ generateMasterKey, encrypt, decrypt, keyToHex, hexToKey } = require('./crypto-utils'));
+    }
+}
+
+function ensureAutomationModules() {
+    if (!puppeteer) {
+        puppeteer = require('puppeteer-core');
+    }
+
+    if (!solveCaptchaImage) {
+        ({ solveCaptchaImage } = require('./captcha-solver'));
+    }
+}
+
+function ensurePdfModule() {
+    if (!generateCardPDF) {
+        ({ generateCardPDF } = require('./card-generator'));
+    }
+}
 
 function getWritableApiKeyPaths() {
     const baseDir = app.getPath('userData');
@@ -46,6 +80,7 @@ function ensureApiKeyStoreInitialized() {
 }
 
 function readStoredApiKeys() {
+    ensureCryptoUtils();
     const writablePaths = ensureApiKeyStoreInitialized();
 
     if (fs.existsSync(writablePaths.encryptedEnvPath) && fs.existsSync(writablePaths.masterKeyPath)) {
@@ -127,9 +162,273 @@ async function hideCaptchaIconsIfNeeded(page) {
 }
 
 let mainWindow;
+let splashWindow = null;
 let browserInstance = null;
 let pageInstance = null;
 let pesanErrorAlert = null;
+let splashShownAt = 0;
+let splashStatusTitle = 'Memulai aplikasi';
+let splashStatusDetail = 'Menyiapkan komponen dasar...';
+let isMainWindowReady = false;
+let isRendererStartupComplete = false;
+
+function getSplashHtml() {
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edabu Tools - Startup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg-1: #eff7f2;
+      --bg-2: #d8efe1;
+      --card: rgba(255,255,255,0.88);
+      --line: rgba(15, 23, 42, 0.08);
+      --text: #0f172a;
+      --muted: #526072;
+      --accent: #138a5b;
+      --accent-soft: rgba(19, 138, 91, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(19, 138, 91, 0.18), transparent 45%),
+        linear-gradient(135deg, var(--bg-1), var(--bg-2));
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .shell {
+      width: 100%;
+      height: 100vh;
+      padding: 28px;
+      position: relative;
+    }
+
+    .card {
+      width: 100%;
+      height: 100%;
+      border-radius: 24px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      backdrop-filter: blur(10px);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 0 rgba(19, 138, 91, 0.45);
+      animation: pulse 1.8s infinite;
+    }
+
+    .title {
+      margin: 18px 0 10px;
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin: 0;
+      max-width: 440px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .status-wrap {
+      display: grid;
+      gap: 10px;
+    }
+
+    .status-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .status-detail {
+      min-height: 22px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .progress {
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(15, 23, 42, 0.08);
+    }
+
+    .progress > span {
+      display: block;
+      width: 42%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #1a9c67, #45c08a, #1a9c67);
+      background-size: 200% 100%;
+      animation: loading 1.5s linear infinite;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    @keyframes loading {
+      from { transform: translateX(-70%); background-position: 0 0; }
+      to { transform: translateX(220%); background-position: 100% 0; }
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(19, 138, 91, 0.45); }
+      70% { box-shadow: 0 0 0 12px rgba(19, 138, 91, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(19, 138, 91, 0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <div>
+        <div class="badge"><span class="dot"></span> Edabu Tools</div>
+        <h1 class="title">Aplikasi sedang disiapkan</h1>
+        <p class="subtitle">Mohon tunggu sebentar. Sistem sedang memuat modul inti, konfigurasi aman, dan antarmuka utama aplikasi.</p>
+      </div>
+
+      <div class="status-wrap">
+        <div id="statusTitle" class="status-title">${splashStatusTitle}</div>
+        <div id="statusDetail" class="status-detail">${splashStatusDetail}</div>
+        <div class="progress"><span></span></div>
+      </div>
+
+      <div class="footer">
+        <span>Jika startup sedikit lebih lama, aplikasi tetap berjalan normal.</span>
+        <span>Version 1.0.0</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+function createSplashWindow() {
+    splashShownAt = Date.now();
+    splashWindow = new BrowserWindow({
+        width: 640,
+        height: 380,
+        frame: false,
+        resizable: false,
+        movable: false,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        show: true,
+        center: true,
+        title: 'Edabu Tools - Startup',
+        backgroundColor: '#eff7f2',
+        autoHideMenuBar: true,
+        webPreferences: {
+            contextIsolation: true,
+            sandbox: true
+        }
+    });
+
+    splashWindow.loadURL(`data:text/html;charset=UTF-8,${encodeURIComponent(getSplashHtml())}`);
+    splashWindow.on('closed', () => {
+        splashWindow = null;
+    });
+}
+
+function setSplashStatus(title, detail) {
+    splashStatusTitle = title;
+    splashStatusDetail = detail;
+
+    if (!splashWindow || splashWindow.isDestroyed()) {
+        return;
+    }
+
+    const script = `
+        (() => {
+            const titleEl = document.getElementById('statusTitle');
+            const detailEl = document.getElementById('statusDetail');
+            if (titleEl) titleEl.textContent = ${JSON.stringify(title)};
+            if (detailEl) detailEl.textContent = ${JSON.stringify(detail)};
+        })();
+    `;
+
+    splashWindow.webContents.executeJavaScript(script).catch(() => {});
+}
+
+async function maybeRevealMainWindow() {
+    if (!isMainWindowReady || !isRendererStartupComplete) {
+        return;
+    }
+
+    await revealMainWindow();
+}
+
+async function closeSplashWindow() {
+    if (!splashWindow || splashWindow.isDestroyed()) {
+        return;
+    }
+
+    const elapsed = Date.now() - splashShownAt;
+    if (elapsed < MIN_SPLASH_MS) {
+        await new Promise((resolve) => setTimeout(resolve, MIN_SPLASH_MS - elapsed));
+    }
+
+    splashWindow.close();
+}
+
+async function revealMainWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
+    }
+
+    setSplashStatus('Hampir siap', 'Membuka dashboard utama...');
+    await closeSplashWindow();
+    if (!mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+    }
+}
 
 // Fungsi bantuan untuk menangkap pesan dan menutup HTML modal dialogs/Notifikasi
 // Menunggu modal muncul (dengan timeout), membaca pesannya, lalu menutupnya.
@@ -193,9 +492,13 @@ async function autoCloseHtmlModals(page, waitMs = 2000) {
 }
 
 function createWindow() {
+    isMainWindowReady = false;
+    isRendererStartupComplete = false;
+
     mainWindow = new BrowserWindow({
         width: 1280,
         height: 850,
+        show: false,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
@@ -203,6 +506,29 @@ function createWindow() {
         },
         title: 'Edabu Tools',
         autoHideMenuBar: true
+    });
+
+    setSplashStatus('Menyiapkan antarmuka', 'Memuat jendela utama aplikasi...');
+
+    mainWindow.webContents.on('did-start-loading', () => {
+        setSplashStatus('Menyiapkan antarmuka', 'Memuat aset utama aplikasi...');
+    });
+
+    mainWindow.webContents.once('did-finish-load', () => {
+        setSplashStatus('Menyiapkan data awal', 'Memuat preferensi lokal dan sesi awal aplikasi...');
+    });
+
+    mainWindow.once('ready-to-show', () => {
+        isMainWindowReady = true;
+        setSplashStatus('Menjalankan startup aplikasi', 'Menunggu sesi browser awal dan captcha login siap...');
+        maybeRevealMainWindow().catch((error) => {
+            console.error('Gagal menampilkan window utama:', error);
+        });
+    });
+
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+        console.error('Gagal memuat window utama:', errorCode, errorDescription);
+        setSplashStatus('Startup gagal', 'Terjadi kendala saat memuat antarmuka aplikasi.');
     });
 
     mainWindow.loadFile('index.html');
@@ -235,10 +561,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    createSplashWindow();
+
     try {
+        setSplashStatus('Memuat konfigurasi aman', 'Menyelaraskan API key dan data awal aplikasi...');
+        ensureDotenvConfigured();
         hydrateStoredApiKeysToProcessEnv();
     } catch (error) {
         console.error('[Settings] Gagal memuat API keys awal:', error);
+        setSplashStatus('Startup tetap berjalan', 'Konfigurasi awal belum sempurna, aplikasi akan tetap dibuka.');
     }
 
     createWindow();
@@ -246,6 +577,28 @@ app.whenReady().then(() => {
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
+});
+
+ipcMain.on('startup-status', (_event, payload) => {
+    if (!payload) return;
+
+    const title = payload.title || splashStatusTitle;
+    const detail = payload.detail || splashStatusDetail;
+    setSplashStatus(title, detail);
+});
+
+ipcMain.on('startup-ready', async (_event, payload) => {
+    isRendererStartupComplete = true;
+
+    if (payload?.title || payload?.detail) {
+        setSplashStatus(payload.title || 'Aplikasi siap', payload.detail || 'Membuka dashboard utama...');
+    }
+
+    try {
+        await maybeRevealMainWindow();
+    } catch (error) {
+        console.error('Gagal menyelesaikan transisi splash:', error);
+    }
 });
 
 // IPC: Quit app setelah logout dari tombol X
@@ -276,6 +629,9 @@ app.on('will-quit', async () => {
 ipcMain.handle('init-session', async () => {
     try {
         if (!browserInstance) {
+            setSplashStatus('Menyiapkan engine browser', 'Memuat modul automasi dan membuka browser latar belakang...');
+            ensureAutomationModules();
+
             console.log('Menyiapkan instance browser...');
 
             const execPath = getSystemChromePath();
@@ -329,6 +685,7 @@ ipcMain.handle('init-session', async () => {
         }
 
         console.log('Menuju halaman login Edabu...');
+        setSplashStatus('Menghubungkan ke Edabu', 'Membuka halaman login dan menyiapkan captcha awal...');
         // Fix 11: Gunakan domcontentloaded agar jauh lebih cepat dan bypass t/o
         await pageInstance.goto('https://edabu.bpjs-kesehatan.go.id/Edabu/Home/Login', {
             waitUntil: 'domcontentloaded',
@@ -349,6 +706,7 @@ ipcMain.handle('init-session', async () => {
         // Icons will only be hidden on search page via hideCaptchaIconsIfNeeded()
 
         console.log('Mengambil screenshot captcha...');
+        setSplashStatus('Menyiapkan login', 'Mengambil captcha pertama agar aplikasi siap digunakan...');
         const captchaElement = await pageInstance.$('#edabuCaptcha_CaptchaImage');
         const captchaBase64 = await captchaElement.screenshot({ encoding: 'base64' });
         console.log('Screenshot berhasil.');
@@ -656,6 +1014,7 @@ ipcMain.handle('solve-captcha', async () => {
     if (!pageInstance) return { status: 'error', message: 'Sesi browser belum ada.' };
 
     try {
+        ensureAutomationModules();
         const { openrouterKey, groqKey } = hydrateStoredApiKeysToProcessEnv();
 
         if (!openrouterKey && !groqKey) {
@@ -756,6 +1115,7 @@ ipcMain.handle('get-api-keys', async () => {
 // Endpoint Generate PDF Kartu BPJS
 ipcMain.handle('generate-card-pdf', async (event, data) => {
     try {
+        ensurePdfModule();
         console.log('[Main] Menerima request generate kartu BPJS:', data.nama);
         const pdfBuffer = await generateCardPDF(data);
 
@@ -783,6 +1143,7 @@ ipcMain.handle('generate-card-pdf', async (event, data) => {
 // Endpoint Preview PDF Kartu BPJS (return base64)
 ipcMain.handle('preview-card-pdf', async (event, data) => {
     try {
+        ensurePdfModule();
         console.log('[Main] Menerima request preview kartu BPJS:', data.nama);
         const pdfBuffer = await generateCardPDF(data);
         const base64 = pdfBuffer.toString('base64');

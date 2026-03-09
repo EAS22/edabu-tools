@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onCaptchaSolverProgress: (callback) => ipcRenderer.on('captcha-solver-progress', callback),
     saveApiKeys: (data) => ipcRenderer.invoke('save-api-keys', data),
     getApiKeys: () => ipcRenderer.invoke('get-api-keys'),
+    startupStatus: (payload) => ipcRenderer.send('startup-status', payload),
+    startupReady: (payload) => ipcRenderer.send('startup-ready', payload),
     logout: () => ipcRenderer.invoke('logout'),
     quitApp: () => ipcRenderer.send('quit-app'),
     onForceLogoutPrompt: (callback) => ipcRenderer.on('force-logout-prompt', callback),

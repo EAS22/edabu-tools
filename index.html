@@ -676,6 +676,13 @@
 
         // ==================== MAIN LOGIC ====================
         async function initAwal() {
+            if (window.electronAPI && window.electronAPI.startupStatus) {
+                window.electronAPI.startupStatus({
+                    title: 'Memuat preferensi lokal',
+                    detail: 'Membaca kredensial tersimpan dan API key bawaan aplikasi...'
+                });
+            }
+
             showLoading('Menyiapkan Sesi Browser Edabu...');
             const savedUser = localStorage.getItem('edabu_user');
             const savedPass = localStorage.getItem('edabu_pass');
@@ -694,6 +701,13 @@
             } catch (e) { /* ignore */ }
 
             try {
+                if (window.electronAPI && window.electronAPI.startupStatus) {
+                    window.electronAPI.startupStatus({
+                        title: 'Menyiapkan sesi browser',
+                        detail: 'Membuka browser latar belakang, menghubungkan ke Edabu, dan mengambil captcha login...'
+                    });
+                }
+
                 const data = await window.electronAPI.initSession();
                 if (data.status === 'success') {
                     setCaptchaAndSolve('login', data.captchaImage);
@@ -706,6 +720,12 @@
                 showAlert('Gagal terhubung ke Puppeteer Backend.');
             } finally {
                 hideLoading();
+                if (window.electronAPI && window.electronAPI.startupReady) {
+                    window.electronAPI.startupReady({
+                        title: 'Aplikasi siap',
+                        detail: 'Dashboard utama siap digunakan.'
+                    });
+                }
             }
         }
 

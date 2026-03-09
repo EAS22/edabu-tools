@@ -1039,12 +1039,30 @@ function setCaptchaAndSolve(panel, captchaImageSrc) {
             el.value = formatted;
         }
 
+        function resetCetakManualFields() {
+            document.getElementById('cetakTglLahir').value = '';
+            document.getElementById('cetakAlamat').value = '';
+            document.getElementById('cetakRT').value = '';
+            document.getElementById('cetakRW').value = '';
+            document.getElementById('cetakDesa').value = '';
+            document.getElementById('cetakKec').value = '';
+            document.getElementById('cetakKab').value = '';
+            document.getElementById('cetakFaskes').value = '';
+            document.getElementById('cetakIngatAlamat').checked = false;
+        }
+
+        function getAlamatStorageKey(nik) {
+            var normalizedNik = (nik || '').replace(/\D/g, '');
+            if (!normalizedNik) return null;
+            return 'edabu_alamat_cetak_' + normalizedNik;
+        }
+
         function bukaCetakKartu(btn) {
             document.getElementById('cetakNik').value = btn.dataset.nik || '';
             document.getElementById('cetakJkn').value = btn.dataset.jkn || '';
             document.getElementById('cetakNama').value = btn.dataset.nama || '';
-            document.getElementById('cetakTglLahir').value = '';
-            muatAlamatTersimpan();
+            resetCetakManualFields();
+            muatAlamatTersimpan(btn.dataset.nik || '');
             document.getElementById('cetakKartuModal').classList.remove('hidden-panel');
         }
 
@@ -1081,9 +1099,9 @@ function setCaptchaAndSolve(panel, captchaImageSrc) {
             }
 
             if (document.getElementById('cetakIngatAlamat').checked) {
-                simpanAlamatTerakhir();
+                simpanAlamatTerakhir(nik);
             } else {
-                hapusAlamatTersimpan();
+                hapusAlamatTersimpan(nik);
             }
 
             var data = {
@@ -1249,7 +1267,10 @@ function setCaptchaAndSolve(panel, captchaImageSrc) {
             }
         }
 
-        function simpanAlamatTerakhir() {
+        function simpanAlamatTerakhir(nik) {
+            var storageKey = getAlamatStorageKey(nik);
+            if (!storageKey) return;
+
             var obj = {
                 tglLahir: document.getElementById('cetakTglLahir').value,
                 alamat: document.getElementById('cetakAlamat').value,
@@ -1260,12 +1281,17 @@ function setCaptchaAndSolve(panel, captchaImageSrc) {
                 kab: document.getElementById('cetakKab').value,
                 faskes: document.getElementById('cetakFaskes').value
             };
-            localStorage.setItem('edabu_alamat_cetak', JSON.stringify(obj));
+            localStorage.setItem(storageKey, JSON.stringify(obj));
+            localStorage.removeItem('edabu_alamat_cetak');
         }
 
-        function muatAlamatTersimpan() {
-            var saved = localStorage.getItem('edabu_alamat_cetak');
+        function muatAlamatTersimpan(nik) {
+            var storageKey = getAlamatStorageKey(nik);
+            if (!storageKey) return;
+
+            var saved = localStorage.getItem(storageKey);
             if (!saved) return;
+
             try {
                 var d = JSON.parse(saved);
                 document.getElementById('cetakTglLahir').value = d.tglLahir || '';
@@ -1280,7 +1306,11 @@ function setCaptchaAndSolve(panel, captchaImageSrc) {
             } catch (e) { /* ignore */ }
         }
 
-        function hapusAlamatTersimpan() {
+        function hapusAlamatTersimpan(nik) {
+            var storageKey = getAlamatStorageKey(nik);
+            if (storageKey) {
+                localStorage.removeItem(storageKey);
+            }
             localStorage.removeItem('edabu_alamat_cetak');
         }
 

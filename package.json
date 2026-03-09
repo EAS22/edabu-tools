@@ -16,18 +16,13 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
-    "@xenova/transformers": "^2.17.2",
     "bwip-js": "^4.8.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
-    "jsbarcode": "^3.12.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.5.207",
-    "puppeteer": "^24.38.0",
-    "tesseract.js": "^7.0.0",
-    "wavefile": "^11.0.0"
+    "puppeteer-core": "^24.38.0"
   },
   "devDependencies": {
     "@electron/packager": "^19.0.5",
@@ -37,6 +32,7 @@
   "build": {
     "appId": "com.edabutools.app",
     "productName": "Edabu Tools",
+    "compression": "maximum",
     "toolsets": {
       "winCodeSign": "1.1.0"
     },
@@ -56,10 +52,21 @@
       "card-generator.js",
       "captcha-solver.js",
       "crypto-utils.js",
-      "migrate-env.js",
+      "faskes.js",
+      "icon.png",
+      "package.json",
       "templates/**/*",
-      "node_modules/**/*",
-      "package.json"
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".env.encrypted",
+        "to": "bootstrap-secrets/.env.encrypted"
+      },
+      {
+        "from": ".master-key",
+        "to": "bootstrap-secrets/.master-key"
+      }
     ]
   }
 }

@@ -3,11 +3,88 @@ require('dotenv').config();
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const { generateCardPDF } = require('./card-generator');
 const { solveCaptchaImage } = require('./captcha-solver');
 const { dialog } = require('electron');
 const { generateMasterKey, encrypt, decrypt, keyToHex, hexToKey } = require('./crypto-utils');
+
+const API_KEY_STORE_DIR = 'bootstrap-secrets';
+
+function getWritableApiKeyPaths() {
+    const baseDir = app.getPath('userData');
+    return {
+        baseDir,
+        encryptedEnvPath: path.join(baseDir, '.env.encrypted'),
+        masterKeyPath: path.join(baseDir, '.master-key')
+    };
+}
+
+function getBundledApiKeyPaths() {
+    const baseDir = app.isPackaged ? path.join(process.resourcesPath, API_KEY_STORE_DIR) : __dirname;
+    return {
+        encryptedEnvPath: path.join(baseDir, '.env.encrypted'),
+        masterKeyPath: path.join(baseDir, '.master-key')
+    };
+}
+
+function ensureApiKeyStoreInitialized() {
+    const writablePaths = getWritableApiKeyPaths();
+    const bundledPaths = getBundledApiKeyPaths();
+
+    fs.mkdirSync(writablePaths.baseDir, { recursive: true });
+
+    if (!fs.existsSync(writablePaths.encryptedEnvPath) && fs.existsSync(bundledPaths.encryptedEnvPath)) {
+        fs.copyFileSync(bundledPaths.encryptedEnvPath, writablePaths.encryptedEnvPath);
+    }
+
+    if (!fs.existsSync(writablePaths.masterKeyPath) && fs.existsSync(bundledPaths.masterKeyPath)) {
+        fs.copyFileSync(bundledPaths.masterKeyPath, writablePaths.masterKeyPath);
+    }
+
+    return writablePaths;
+}
+
+function readStoredApiKeys() {
+    const writablePaths = ensureApiKeyStoreInitialized();
+
+    if (fs.existsSync(writablePaths.encryptedEnvPath) && fs.existsSync(writablePaths.masterKeyPath)) {
+        const masterKey = hexToKey(fs.readFileSync(writablePaths.masterKeyPath, 'utf-8').trim());
+        const envContent = fs.readFileSync(writablePaths.encryptedEnvPath, 'utf-8');
+        const openrouterMatch = envContent.match(/ENCRYPTED_OPENROUTER=(.+)/);
+        const groqMatch = envContent.match(/ENCRYPTED_GROQ=(.+)/);
+
+        return {
+            openrouterKey: openrouterMatch?.[1] ? decrypt(openrouterMatch[1], masterKey) : '',
+            groqKey: groqMatch?.[1] ? decrypt(groqMatch[1], masterKey) : '',
+            writablePaths
+        };
+    }
+
+    return {
+        openrouterKey: process.env.OPENROUTER_API_KEY || '',
+        groqKey: process.env.GROQ_API_KEY || '',
+        writablePaths
+    };
+}
+
+function hydrateStoredApiKeysToProcessEnv() {
+    const keys = readStoredApiKeys();
+
+    process.env.OPENROUTER_API_KEY = keys.openrouterKey || '';
+    process.env.GROQ_API_KEY = keys.groqKey || '';
+
+    return keys;
+}
+
+function upsertEncryptedValue(envContent, key, value) {
+    if (envContent.includes(`${key}=`)) {
+        return envContent.replace(new RegExp(`${key}=.*`, 'g'), `${key}=${value}`);
+    }
+
+    const trimmed = envContent.trimEnd();
+    return `${trimmed}${trimmed ? '\n' : ''}${key}=${value}\n`;
+}
 
 function getSystemChromePath() {
     const paths = [
@@ -158,6 +235,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    try {
+        hydrateStoredApiKeysToProcessEnv();
+    } catch (error) {
+        console.error('[Settings] Gagal memuat API keys awal:', error);
+    }
+
     createWindow();
 
     app.on('activate', () => {
@@ -573,8 +656,7 @@ ipcMain.handle('solve-captcha', async () => {
     if (!pageInstance) return { status: 'error', message: 'Sesi browser belum ada.' };
 
     try {
-        const openrouterKey = process.env.OPENROUTER_API_KEY;
-        const groqKey = process.env.GROQ_API_KEY;
+        const { openrouterKey, groqKey } = hydrateStoredApiKeysToProcessEnv();
 
         if (!openrouterKey && !groqKey) {
             return { status: 'error', message: 'Tidak ada API key yang terkonfigurasi.' };
@@ -613,13 +695,15 @@ ipcMain.handle('solve-captcha', async () => {
 // Endpoint Save API Keys (OpenRouter + Groq)
 ipcMain.handle('save-api-keys', async (event, { openrouterKey, groqKey }) => {
     try {
-        const encryptedEnvPath = path.join(__dirname, '.env.encrypted');
-        const masterKeyPath = path.join(__dirname, '.master-key');
+        const existingKeys = readStoredApiKeys();
+        const { encryptedEnvPath, masterKeyPath } = existingKeys.writablePaths;
+        const nextOpenRouterKey = openrouterKey || existingKeys.openrouterKey || '';
+        const nextGroqKey = groqKey || existingKeys.groqKey || '';
         
         // Generate master key if not exists
         let masterKey;
         if (fs.existsSync(masterKeyPath)) {
-            masterKey = hexToKey(fs.readFileSync(masterKeyPath, 'utf-8'));
+            masterKey = hexToKey(fs.readFileSync(masterKeyPath, 'utf-8').trim());
         } else {
             masterKey = generateMasterKey();
             fs.writeFileSync(masterKeyPath, keyToHex(masterKey), 'utf-8');
@@ -632,27 +716,18 @@ ipcMain.handle('save-api-keys', async (event, { openrouterKey, groqKey }) => {
         }
         
         // Encrypt both API keys
-        const encryptedOpenRouter = encrypt(openrouterKey, masterKey);
-        const encryptedGroq = encrypt(groqKey, masterKey);
+        const encryptedOpenRouter = encrypt(nextOpenRouterKey, masterKey);
+        const encryptedGroq = encrypt(nextGroqKey, masterKey);
         
         // Update or add encrypted keys
-        if (envContent.includes('ENCRYPTED_OPENROUTER=')) {
-            envContent = envContent.replace(/ENCRYPTED_OPENROUTER=.*/g, `ENCRYPTED_OPENROUTER=${encryptedOpenRouter}`);
-        } else {
-            envContent = envContent.trimEnd() + `\nENCRYPTED_OPENROUTER=${encryptedOpenRouter}\n`;
-        }
-        
-        if (envContent.includes('ENCRYPTED_GROQ=')) {
-            envContent = envContent.replace(/ENCRYPTED_GROQ=.*/g, `ENCRYPTED_GROQ=${encryptedGroq}`);
-        } else {
-            envContent = envContent.trimEnd() + `\nENCRYPTED_GROQ=${encryptedGroq}\n`;
-        }
+        envContent = upsertEncryptedValue(envContent, 'ENCRYPTED_OPENROUTER', encryptedOpenRouter);
+        envContent = upsertEncryptedValue(envContent, 'ENCRYPTED_GROQ', encryptedGroq);
         
         fs.writeFileSync(encryptedEnvPath, envContent, 'utf-8');
         
         // Update process.env for current session
-        process.env.OPENROUTER_API_KEY = openrouterKey;
-        process.env.GROQ_API_KEY = groqKey;
+        process.env.OPENROUTER_API_KEY = nextOpenRouterKey;
+        process.env.GROQ_API_KEY = nextGroqKey;
         
         console.log('[Settings] API keys dienkripsi dan disimpan (.env.encrypted + .master-key).');
         return { status: 'success' };
@@ -664,36 +739,8 @@ ipcMain.handle('save-api-keys', async (event, { openrouterKey, groqKey }) => {
 // Endpoint Get API Keys
 ipcMain.handle('get-api-keys', async () => {
     try {
-        const encryptedEnvPath = path.join(__dirname, '.env.encrypted');
-        const masterKeyPath = path.join(__dirname, '.master-key');
-        
-        // If encrypted file exists, decrypt and return
-        if (fs.existsSync(encryptedEnvPath) && fs.existsSync(masterKeyPath)) {
-            const masterKey = hexToKey(fs.readFileSync(masterKeyPath, 'utf-8'));
-            const envContent = fs.readFileSync(encryptedEnvPath, 'utf-8');
-            
-            let openrouterKey = '';
-            let groqKey = '';
-            
-            // Parse encrypted values
-            const openrouterMatch = envContent.match(/ENCRYPTED_OPENROUTER=(.+)/);
-            const groqMatch = envContent.match(/ENCRYPTED_GROQ=(.+)/);
-            
-            if (openrouterMatch && openrouterMatch[1]) {
-                openrouterKey = decrypt(openrouterMatch[1], masterKey);
-            }
-            if (groqMatch && groqMatch[1]) {
-                groqKey = decrypt(groqMatch[1], masterKey);
-            }
-            
-            return { openrouterKey, groqKey };
-        }
-        
-        // Fallback to process.env (backward compatibility)
-        return {
-            openrouterKey: process.env.OPENROUTER_API_KEY || '',
-            groqKey: process.env.GROQ_API_KEY || ''
-        };
+        const { openrouterKey, groqKey } = hydrateStoredApiKeysToProcessEnv();
+        return { openrouterKey, groqKey };
     } catch (error) {
         console.error('[Settings] Gagal mendekripsi API keys:', error);
         // Fallback to process.env on error
